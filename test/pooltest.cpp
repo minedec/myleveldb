@@ -14,6 +14,7 @@ void func2() {
 
 
 int main() {
+    std::cout << "aaa" << std::endl;
     ThreadPool* tp = new ThreadPool(1);
     tp->start();
     sleep(5);

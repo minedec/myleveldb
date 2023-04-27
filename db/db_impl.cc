@@ -1114,6 +1114,11 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
 
 Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
+  return GetWrapper(options, key, value);
+}
+
+Status DBImpl::GetWrapper(const ReadOptions& options, const Slice& key,
+                   std::string* value) {
   Status s;
   MutexLock l(&mutex_);
   SequenceNumber snapshot;
@@ -1156,7 +1161,7 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
   mem->Unref();
   if (imm != nullptr) imm->Unref();
   current->Unref();
-  return s;
+  return s;                  
 }
 
 Iterator* DBImpl::NewIterator(const ReadOptions& options) {
@@ -1190,11 +1195,11 @@ void DBImpl::ReleaseSnapshot(const Snapshot* snapshot) {
 
 // Convenience methods
 Status DBImpl::Put(const WriteOptions& o, const Slice& key, const Slice& val) {
-  return DB::Put(o, key, val);
+  return PutWrapper(o, key, val);
 }
 
 Status DBImpl::Delete(const WriteOptions& options, const Slice& key) {
-  return DB::Delete(options, key);
+  return DeleteWrapper(options, key);
 }
 
 Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
@@ -1486,7 +1491,20 @@ Status DB::Put(const WriteOptions& opt, const Slice& key, const Slice& value) {
   return Write(opt, &batch);
 }
 
+// DB::Put wrapper
+Status DBImpl::PutWrapper(const WriteOptions& opt, const Slice& key, const Slice& value) {
+  WriteBatch batch;
+  batch.Put(key, value);
+  return Write(opt, &batch);
+}
+
 Status DB::Delete(const WriteOptions& opt, const Slice& key) {
+  WriteBatch batch;
+  batch.Delete(key);
+  return Write(opt, &batch);
+}
+
+Status DBImpl::DeleteWrapper(const WriteOptions& opt, const Slice& key) {
   WriteBatch batch;
   batch.Delete(key);
   return Write(opt, &batch);

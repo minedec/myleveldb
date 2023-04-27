@@ -29,11 +29,13 @@ ThreadPool::ThreadPool(int size) : m_size(size) {
         pthread_t thread;
         m_threads.emplace_back(thread);
     }
-    pthread_cond_wait(&m_condition, nullptr);
+    pthread_cond_init(&m_condition, nullptr);
 }
 
 
+
 void ThreadPool::start() {
+    std::cout << "start threadpool" << std::endl;
     for (int i = 0; i < m_size; ++i) {
         pthread_create(&m_threads[i], nullptr, &ThreadPool::MainFunction, this);
     }
