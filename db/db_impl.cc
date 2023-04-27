@@ -11,6 +11,8 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <iostream>
+#include <futrue>
 
 #include "db/builder.h"
 #include "db/db_iter.h"
@@ -34,6 +36,8 @@
 #include "util/coding.h"
 #include "util/logging.h"
 #include "util/mutexlock.h"
+#include "agent/threadpool.h"
+
 
 namespace leveldb {
 
@@ -1114,7 +1118,9 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
 
 Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
-  return GetWrapper(options, key, value);
+  ThreadPool* dbThreadPool = threadPool;
+  std::future<Status> status = dbThreadPool->addTask(dbThreadPool->Get, GetWrapper, options, Slice, key);
+  return status.get();
 }
 
 Status DBImpl::GetWrapper(const ReadOptions& options, const Slice& key,
@@ -1514,9 +1520,14 @@ DB::~DB() = default;
 
 Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   *dbptr = nullptr;
-
   DBImpl* impl = new DBImpl(options, dbname);
   impl->mutex_.Lock();
+
+  // Init thread pool
+  impl->threadPool = new ThreadPool(1);
+  impl->threadPool->m_db = dbptr;
+  impl->threadPool->start();
+
   VersionEdit edit;
   // Recover handles create_if_missing, error_if_exists
   bool save_manifest = false;

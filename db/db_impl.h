@@ -84,6 +84,7 @@ class DBImpl : public DB {
   friend class DB;
   struct CompactionState;
   struct Writer;
+  class ThreadPool* threadPool;
 
   // Information for a manual compaction
   struct ManualCompaction {

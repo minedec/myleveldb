@@ -2,6 +2,8 @@
 #include <queue>
 #include <functional>
 #include <iostream>
+#include <future>
+
 #include "threadpool.h"
 #include "port/port.h"
 #include "util/mutexlock.h"
@@ -21,11 +23,11 @@ void* ThreadPool::MainFunction(void* ptr) {
         while (pool->m_tasks.empty()) {
             pthread_cond_wait(&(pool->m_condition), &pool->m_mutex);
         }
-        std::function<void()> cb = pool->m_tasks.front();
+        auto dbOperation = pool->m_tasks.front();
         pool->m_tasks.pop();
         pthread_mutex_unlock(&pool->m_mutex);
 
-        cb();
+        dbOperation();
     }
     return nullptr;
 }
@@ -50,11 +52,14 @@ void ThreadPool::stop() {
   m_is_stop = true;
 }
 
-void ThreadPool::addTask(std::function<void()> cb) {
+std::future<Status> ThreadPool::addTask(OperationCode, function<void()> cb, Args...) {
+    std::promise<Status> statusPromise;
+    std::future<Status> status = statusPromise.get_future();
     pthread_mutex_lock(&m_mutex);
     m_tasks.push(cb);
     pthread_mutex_unlock(&m_mutex);
     pthread_cond_signal(&m_condition);
+    return status;
 }
 
 ThreadPool::~ThreadPool() {}

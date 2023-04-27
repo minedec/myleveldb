@@ -1,6 +1,7 @@
 #include <pthread.h>
 #include <queue>
 #include <functional>
+#include "leveldb/db.h"
 
 namespace leveldb {
 
@@ -27,6 +28,14 @@ public:
     pthread_mutex_t m_mutex;
     pthread_cond_t m_condition;
     bool m_is_stop {false};
+
+    DB** m_db;
+    enum OperationCode {
+        Write = 0,
+        Get = 1,
+        Put = 2,
+        Delete = 3
+    };
 };
 
 }
