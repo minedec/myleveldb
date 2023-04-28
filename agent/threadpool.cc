@@ -52,7 +52,7 @@ void ThreadPool::stop() {
   m_is_stop = true;
 }
 
-std::future<Status> ThreadPool::addTask(OperationCode, function<void()> cb, Args...) {
+std::future<Status> ThreadPool::addTask(OperationCode, std::function<void()> cb, ...) {
     std::promise<Status> statusPromise;
     std::future<Status> status = statusPromise.get_future();
     pthread_mutex_lock(&m_mutex);

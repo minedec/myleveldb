@@ -15,12 +15,13 @@ void* ThreadPool::MainFunction(void* ptr) {
         while (pool->m_tasks.empty()) {
             pthread_cond_wait(&(pool->m_condition), &pool->m_mutex);
         }
-        std::function<int()> cb = pool->m_tasks.front().first;
-        std::promise<int>& promise = pool->m_tasks.front().second;
+        std::function<void(std::promise<int>&)> cb = pool->m_tasks.front();
+        std::promise<int>& promise = pool->m_promises.front();
         pool->m_tasks.pop();
+        pool->m_promises.pop();
         pthread_mutex_unlock(&pool->m_mutex);
 
-        cb();
+        cb(promise);
     }
     return nullptr;
 }
@@ -46,14 +47,16 @@ void ThreadPool::stop() {
   m_is_stop = true;
 }
 
-std::future<int> ThreadPool::addTask(std::function<int()> cb) {
-    std::promise<int> promise;
-    std::future<int> future;
+void ThreadPool::addTask(std::function<void(std::promise<int>&)> cb, std::promise<int>& promise) {
     pthread_mutex_lock(&m_mutex);
-    m_tasks.emplace(cb, std::ref(promise));
+    m_tasks.push(cb);
+    m_promises.push(&promise);
     pthread_mutex_unlock(&m_mutex);
     pthread_cond_signal(&m_condition);
-    return future;
+}
+
+void ThreadPool::addVarArgTask(std::function<void(...)> cb, ...) {
+    
 }
 
 ThreadPool::~ThreadPool() {}

@@ -16,7 +16,9 @@ public:
 
     void stop();
 
-    std::future<int> addTask(std::function<int()> cb);
+    void addTask(std::function<void(std::promise<int>&)> cb, std::promise<int>& promise);
+
+    void addVarArgTask(std::function<void(...)> cb, ...);
 
 private:
     static void* MainFunction(void* ptr);
@@ -24,7 +26,8 @@ private:
 public:
     int m_size {0};
     std::vector<pthread_t> m_threads;
-    std::queue<std::pair<std::function<int()>, std::promise<int>>> m_tasks;
+    std::queue<std::promise<int>*> m_promises;
+    std::queue<std::function<void(std::promise<int>&)>> m_tasks;
 
     pthread_mutex_t m_mutex;
     pthread_cond_t m_condition;
