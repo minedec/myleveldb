@@ -9,6 +9,7 @@
 #include <deque>
 #include <set>
 #include <string>
+#include <future>
 
 #include "db/dbformat.h"
 #include "db/log_writer.h"
@@ -47,8 +48,8 @@ class DBImpl : public DB {
   Status PutWrapper(const WriteOptions&, const Slice& key,
              const Slice& value) ;
   Status DeleteWrapper(const WriteOptions&, const Slice& key);
-  Status WriteWrapper(const WriteOptions& options, WriteBatch* updates);
-  Status GetWrapper(const ReadOptions& options, const Slice& key,
+  void WriteWrapper(std::promise<Status>* promise, const WriteOptions& options, WriteBatch* updates);
+  void GetWrapper(std::promise<Status>* promise, const ReadOptions& options, const Slice& key,
              std::string* value);
 
   Iterator* NewIterator(const ReadOptions&) override;

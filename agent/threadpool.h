@@ -32,7 +32,7 @@ public:
 
     void stop();
 
-    std::future<Status> addTask(OperationCode code, std::function<void()> dbOperation, ...);
+    void addTask(std::function<void()> dbOperation);
 
 private:
     static void* MainFunction(void* ptr);

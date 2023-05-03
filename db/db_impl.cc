@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 #include <iostream>
-#include <futrue>
+#include <future>
 
 #include "db/builder.h"
 #include "db/db_iter.h"
@@ -1119,11 +1119,14 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
 Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
   ThreadPool* dbThreadPool = threadPool;
-  std::future<Status> status = dbThreadPool->addTask(dbThreadPool->Get, GetWrapper, options, Slice, key);
-  return status.get();
+  std::promise<Status> promise;
+  std::future<Status> future = promise.get_future();
+  auto getfunc = std::bind(&DBImpl::GetWrapper, this, &promise, options, key, value);
+  dbThreadPool->addTask(getfunc);
+  return future.get();
 }
 
-Status DBImpl::GetWrapper(const ReadOptions& options, const Slice& key,
+void DBImpl::GetWrapper(std::promise<Status>* promise, const ReadOptions& options, const Slice& key,
                    std::string* value) {
   Status s;
   MutexLock l(&mutex_);
@@ -1159,6 +1162,7 @@ Status DBImpl::GetWrapper(const ReadOptions& options, const Slice& key,
       have_stat_update = true;
     }
     mutex_.Lock();
+    promise->set_value(s);
   }
 
   if (have_stat_update && current->UpdateStats(stats)) {
@@ -1167,7 +1171,6 @@ Status DBImpl::GetWrapper(const ReadOptions& options, const Slice& key,
   mem->Unref();
   if (imm != nullptr) imm->Unref();
   current->Unref();
-  return s;                  
 }
 
 Iterator* DBImpl::NewIterator(const ReadOptions& options) {
@@ -1209,6 +1212,15 @@ Status DBImpl::Delete(const WriteOptions& options, const Slice& key) {
 }
 
 Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
+  ThreadPool* dbThreadPool = threadPool;
+  std::promise<Status> promise;
+  std::future<Status> future = promise.get_future();
+  auto writefunc = std::bind(&DBImpl::WriteWrapper, this, &promise, options, updates);
+  dbThreadPool->addTask(writefunc);
+  return future.get();
+}
+
+void DBImpl::WriteWrapper(std::promise<Status>* promise, const WriteOptions& options, WriteBatch* updates) {
   Writer w(&mutex_);
   w.batch = updates;
   w.sync = options.sync;
@@ -1220,7 +1232,8 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     w.cv.Wait();
   }
   if (w.done) {
-    return w.status;
+    promise->set_value(w.status);
+    return;
   }
 
   // May temporarily unlock and wait.
@@ -1278,8 +1291,9 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     writers_.front()->cv.Signal();
   }
 
-  return status;
+  promise->set_value(status);
 }
+
 
 // REQUIRES: Writer list must be non-empty
 // REQUIRES: First writer must have a non-null batch
