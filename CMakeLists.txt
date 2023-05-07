@@ -30,7 +30,7 @@ else (WIN32)
   set(LEVELDB_PLATFORM_NAME LEVELDB_PLATFORM_POSIX)
 endif (WIN32)
 
-option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" OFF)
+option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" ON)
 option(LEVELDB_BUILD_BENCHMARKS "Build LevelDB's benchmarks" ON)
 option(LEVELDB_INSTALL "Install LevelDB's header and library" ON)
 
@@ -290,7 +290,7 @@ target_link_libraries(leveldb Threads::Threads)
 add_executable(leveldbutil
   "db/leveldbutil.cc"
 )
-target_link_libraries(leveldbutil leveldb)
+target_link_libraries(leveldbutil leveldb numa)
 
 if(LEVELDB_BUILD_TESTS)
   enable_testing()
@@ -352,7 +352,7 @@ if(LEVELDB_BUILD_TESTS)
         "util/logging_test.cc"
     )
   endif(NOT BUILD_SHARED_LIBS)
-  target_link_libraries(leveldb_tests leveldb gmock gtest gtest_main)
+  target_link_libraries(leveldb_tests leveldb gmock gtest gtest_main numa)
   target_compile_definitions(leveldb_tests
     PRIVATE
       ${LEVELDB_PLATFORM_NAME}=1
@@ -378,7 +378,7 @@ if(LEVELDB_BUILD_TESTS)
 
         "${test_file}"
     )
-    target_link_libraries("${test_target_name}" leveldb gmock gtest)
+    target_link_libraries("${test_target_name}" leveldb gmock gtest numa)
     target_compile_definitions("${test_target_name}"
       PRIVATE
         ${LEVELDB_PLATFORM_NAME}=1

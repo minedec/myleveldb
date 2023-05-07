@@ -679,8 +679,8 @@ void DBImpl::MaybeScheduleCompaction() {
     // No work to be done
   } else {
     background_compaction_scheduled_ = true;
-    env_->Schedule(&DBImpl::BGWork, this);
-    // env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
+    // env_->Schedule(&DBImpl::BGWork, this);
+    env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
   }
 }
 
