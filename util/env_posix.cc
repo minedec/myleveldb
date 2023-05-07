@@ -13,7 +13,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <iostream>
-#include <numa.h>
 
 #include <atomic>
 #include <cerrno>
@@ -695,6 +694,9 @@ class PosixEnv : public Env {
 
   void Schedule(void (*background_work_function)(void* background_work_arg),
                 void* background_work_arg) override;
+  
+  void ScheduleNuma(void (*background_work_function)(void* background_work_arg),
+                void* background_work_arg, int node_id) override;
 
   void StartThread(void (*thread_main)(void* thread_main_arg),
                    void* thread_main_arg) override {
@@ -751,9 +753,14 @@ class PosixEnv : public Env {
 
  private:
   void BackgroundThreadMain();
+  void BackgroundThreadNodeMain(int node_id);
 
   static void BackgroundThreadEntryPoint(PosixEnv* env) {
     env->BackgroundThreadMain();
+  }
+
+  static void BackgroundThreadNodeEntryPoint(PosixEnv* env, int node_id) {
+    env->BackgroundThreadNodeMain(node_id);
   }
 
   // Stores the work item data in a Schedule() call.
@@ -778,10 +785,11 @@ class PosixEnv : public Env {
       GUARDED_BY(background_work_mutex_);
 
   // // Each node for a background work
-  // int nodeNum = numa_num_possible_nodes();
-  // std::vector<port::Mutex> background_word_mutexs_;
-  // std::vector<port::CondVar> background_work_cvs_;
-  // std::vector<bool> started_background_threads_;
+  std::vector<port::Mutex*> background_work_mutexs_;
+  std::vector<port::CondVar*> background_work_cvs_;
+  std::vector<bool> started_background_threads_;
+
+  std::vector<std::queue<BackgroundWorkItem>> background_work_queues_;
   
 
   PosixLockTable locks_;  // Thread-safe.
@@ -821,7 +829,25 @@ PosixEnv::PosixEnv()
     : background_work_cv_(&background_work_mutex_),
       started_background_thread_(false),
       mmap_limiter_(MaxMmaps()),
-      fd_limiter_(MaxOpenFiles()) {}
+      fd_limiter_(MaxOpenFiles()) {
+        int node_num = numa_num_possible_nodes();
+        // background_work_mutexs_.resize(node_num);
+        for(int i = 0; i < node_num; ++i) {
+          background_work_mutexs_.push_back(new port::Mutex());
+        }
+        // background_work_cvs_.resize(node_num);
+        for(int i = 0; i < node_num; ++i) {
+          background_work_cvs_.push_back(new port::CondVar(background_work_mutexs_[i]));
+        }
+        started_background_threads_.resize(node_num, false);
+        // for(int i = 0; i < node_num; ++i) {
+        //   started_background_threads_[i] GUARDED_BY(background_work_mutexs[i]);
+        // }
+        background_work_queues_.resize(node_num);
+        // for(int i = 0; i < node_num; ++i) {
+        //   background_work_queues_[i] GUARDED_BY(background_work_mutexs[i]);
+        // }
+      }
 
 void PosixEnv::Schedule(
     void (*background_work_function)(void* background_work_arg),
@@ -844,6 +870,34 @@ void PosixEnv::Schedule(
   background_work_mutex_.Unlock();
 }
 
+void PosixEnv::ScheduleNuma(
+  void (*background_work_function)(void* background_work_arg),
+    void* background_work_arg, int node_id) {
+  background_work_mutexs_[node_id]->Lock();
+
+  // Start the background thread, if we haven't done so already.
+  if (!started_background_threads_[node_id]) {
+    started_background_threads_[node_id] = true;
+    std::thread background_thread(PosixEnv::BackgroundThreadNodeEntryPoint, this, node_id);
+
+    // Bind thread to local PM
+    struct bitmask *mask = numa_bitmask_alloc(numa_num_possible_nodes());
+    numa_bitmask_setbit(mask, node_id);
+    numa_bind(mask);
+    numa_bitmask_free(mask);
+
+    background_thread.detach();
+  }
+
+  // If the queue is empty, the background thread may be waiting for work.
+  if (background_work_queues_[node_id].empty()) {
+    background_work_cvs_[node_id]->Signal();
+  }
+
+  background_work_queues_[node_id].emplace(background_work_function, background_work_arg);
+  background_work_mutexs_[node_id]->Unlock();
+}
+
 void PosixEnv::BackgroundThreadMain() {
   // std::cout << "background thread: " << gettid() << "\n";
   while (true) {
@@ -860,6 +914,25 @@ void PosixEnv::BackgroundThreadMain() {
     background_work_queue_.pop();
 
     background_work_mutex_.Unlock();
+    background_work_function(background_work_arg);
+  }
+}
+
+void PosixEnv::BackgroundThreadNodeMain(int node_id) {
+  while (true) {
+    background_work_mutexs_[node_id]->Lock();
+
+    // Wait until there is work to be done.
+    while (background_work_queues_[node_id].empty()) {
+      background_work_cvs_[node_id]->Wait();
+    }
+
+    assert(!background_work_queues_[node_id].empty());
+    auto background_work_function = background_work_queues_[node_id].front().function;
+    void* background_work_arg = background_work_queues_[node_id].front().arg;
+    background_work_queues_[node_id].pop();
+
+    background_work_mutexs_[node_id]->Unlock();
     background_work_function(background_work_arg);
   }
 }

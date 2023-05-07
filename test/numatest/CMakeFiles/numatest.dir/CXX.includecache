@@ -1,0 +1,46 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/minedec/myleveldb/test/numatest/numatest.cpp
+iostream
+-
+unistd.h
+-
+future
+-
+numa.h
+-
+threadpool.h
+/home/minedec/myleveldb/test/numatest/threadpool.h
+
+/home/minedec/myleveldb/test/numatest/threadpool.cpp
+pthread.h
+-
+queue
+-
+functional
+-
+iostream
+-
+future
+-
+numa.h
+-
+threadpool.h
+/home/minedec/myleveldb/test/numatest/threadpool.h
+
+/home/minedec/myleveldb/test/numatest/threadpool.h
+pthread.h
+-
+queue
+-
+functional
+-
+future
+-
+

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <numa.h>
 
 #include "leveldb/export.h"
 #include "leveldb/status.h"
@@ -196,6 +197,8 @@ class LEVELDB_EXPORT Env {
   // I.e., the caller may not assume that background work items are
   // serialized.
   virtual void Schedule(void (*function)(void* arg), void* arg) = 0;
+
+  virtual void ScheduleNuma(void (*function)(void* arg), void* arg, int node_id) = 0;
 
   // Start a new thread, invoking "function(arg)" within the new thread.
   // When "function(arg)" returns, the thread will be destroyed.
@@ -384,6 +387,11 @@ class LEVELDB_EXPORT EnvWrapper : public Env {
   void Schedule(void (*f)(void*), void* a) override {
     return target_->Schedule(f, a);
   }
+
+  void ScheduleNuma(void (*f)(void*), void* a, int b) override {
+    return target_->ScheduleNuma(f, a, b);
+  }
+
   void StartThread(void (*f)(void*), void* a) override {
     return target_->StartThread(f, a);
   }

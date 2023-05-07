@@ -30,7 +30,7 @@ else (WIN32)
   set(LEVELDB_PLATFORM_NAME LEVELDB_PLATFORM_POSIX)
 endif (WIN32)
 
-option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" ON)
+option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" OFF)
 option(LEVELDB_BUILD_BENCHMARKS "Build LevelDB's benchmarks" ON)
 option(LEVELDB_INSTALL "Install LevelDB's header and library" ON)
 
@@ -426,7 +426,7 @@ if(LEVELDB_BUILD_BENCHMARKS)
 
         "${bench_file}"
     )
-    target_link_libraries("${bench_target_name}" leveldb gmock gtest benchmark)
+    target_link_libraries("${bench_target_name}" leveldb gmock gtest benchmark numa)
     target_compile_definitions("${bench_target_name}"
       PRIVATE
         ${LEVELDB_PLATFORM_NAME}=1

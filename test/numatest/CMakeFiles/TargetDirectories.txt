@@ -1,0 +1,3 @@
+/home/minedec/myleveldb/test/numatest/CMakeFiles/rebuild_cache.dir
+/home/minedec/myleveldb/test/numatest/CMakeFiles/edit_cache.dir
+/home/minedec/myleveldb/test/numatest/CMakeFiles/numatest.dir
