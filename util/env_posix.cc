@@ -12,6 +12,8 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <iostream>
+#include <numa.h>
 
 #include <atomic>
 #include <cerrno>
@@ -22,6 +24,7 @@
 #include <cstring>
 #include <limits>
 #include <queue>
+#include <vector>
 #include <set>
 #include <string>
 #include <thread>
@@ -337,6 +340,8 @@ class PosixWritableFile final : public WritableFile {
     // This needs to happen before the manifest file is flushed to disk, to
     // avoid crashing in a state where the manifest refers to files that are not
     // yet on disk.
+    // std::cout << "sync thread is: " << gettid() << "\n";
+    // std::cout << "file name is: " << filename_ << "\n";
     Status status = SyncDirIfManifest();
     if (!status.ok()) {
       return status;
@@ -772,6 +777,13 @@ class PosixEnv : public Env {
   std::queue<BackgroundWorkItem> background_work_queue_
       GUARDED_BY(background_work_mutex_);
 
+  // // Each node for a background work
+  // int nodeNum = numa_num_possible_nodes();
+  // std::vector<port::Mutex> background_word_mutexs_;
+  // std::vector<port::CondVar> background_work_cvs_;
+  // std::vector<bool> started_background_threads_;
+  
+
   PosixLockTable locks_;  // Thread-safe.
   Limiter mmap_limiter_;  // Thread-safe.
   Limiter fd_limiter_;    // Thread-safe.
@@ -833,6 +845,7 @@ void PosixEnv::Schedule(
 }
 
 void PosixEnv::BackgroundThreadMain() {
+  // std::cout << "background thread: " << gettid() << "\n";
   while (true) {
     background_work_mutex_.Lock();
 

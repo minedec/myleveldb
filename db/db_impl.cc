@@ -13,6 +13,8 @@
 #include <vector>
 #include <iostream>
 #include <future>
+#include <pthread.h>
+#include <unistd.h>
 
 #include "db/builder.h"
 #include "db/db_iter.h"
@@ -508,6 +510,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
 
 Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
                                 Version* base) {
+  // std::cout << "writel0table thread is: " << gettid() << "\n";
   mutex_.AssertHeld();
   const uint64_t start_micros = env_->NowMicros();
   FileMetaData meta;
@@ -1251,6 +1254,7 @@ void DBImpl::WriteWrapper(std::promise<Status>* promise, const WriteOptions& opt
     // into mem_.
     {
       mutex_.Unlock();
+      // std::cout << "log addrecord at thread: " << gettid() << "\n";
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
       if (status.ok() && options.sync) {
@@ -1537,6 +1541,7 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   DBImpl* impl = new DBImpl(options, dbname);
   impl->mutex_.Lock();
 
+  // std::cout << "db main thread: " << gettid() << "\n";
   // Init thread pool
   impl->threadPool = new ThreadPool(1);
   impl->threadPool->m_db = dbptr;

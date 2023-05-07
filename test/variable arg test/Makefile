@@ -3,3 +3,6 @@ varargstest: threadpool.h threadpool.cpp varargstest.cpp
 
 clean:
 	rm ../build/varargstest
+
+run:
+	./../build/varargstest

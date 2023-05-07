@@ -3,3 +3,6 @@ pooltest: threadpool.h threadpool.cpp pooltest.cpp
 
 clean:
 	rm ../build/pooltest
+
+run:
+	./../build/pooltest
