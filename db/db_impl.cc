@@ -1118,11 +1118,11 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
 
 Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
-  ThreadPool* dbThreadPool = threadPool;
   std::promise<Status> promise;
   std::future<Status> future = promise.get_future();
-  auto getfunc = std::bind(&DBImpl::GetWrapper, this, &promise, options, key, value);
-  dbThreadPool->addTask(getfunc);
+  // auto getfunc = std::bind(&DBImpl::GetWrapper, this, &promise, options, key, value);
+  // threadPool->addTask(getfunc);
+  GetWrapper(&promise, options, key, value);
   return future.get();
 }
 
@@ -1212,11 +1212,11 @@ Status DBImpl::Delete(const WriteOptions& options, const Slice& key) {
 }
 
 Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
-  ThreadPool* dbThreadPool = threadPool;
   std::promise<Status> promise;
   std::future<Status> future = promise.get_future();
-  auto writefunc = std::bind(&DBImpl::WriteWrapper, this, &promise, options, updates);
-  dbThreadPool->addTask(writefunc);
+  // auto writefunc = std::bind(&DBImpl::WriteWrapper, this, &promise, options, updates);
+  // threadPool->addTask(writefunc);
+  WriteWrapper(&promise, options, updates);
   return future.get();
 }
 
