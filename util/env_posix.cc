@@ -37,6 +37,7 @@
 #include "port/thread_annotations.h"
 #include "util/env_posix_test_helper.h"
 #include "util/posix_logger.h"
+#include "../db/db_impl.h"
 
 namespace leveldb {
 
@@ -875,18 +876,22 @@ void PosixEnv::ScheduleNuma(
     void* background_work_arg, int node_id) {
   background_work_mutexs_[node_id]->Lock();
 
-  // Start the background thread, if we haven't done so already.
-  if (!started_background_threads_[node_id]) {
-    started_background_threads_[node_id] = true;
-    std::thread background_thread(PosixEnv::BackgroundThreadNodeEntryPoint, this, node_id);
+  // // Start the background thread, if we haven't done so already.
+  // if (!started_background_threads_[node_id]) {
+  //   started_background_threads_[node_id] = true;
+  //   std::thread background_thread(PosixEnv::BackgroundThreadNodeEntryPoint, this, node_id);
 
-    // Bind thread to local PM
-    struct bitmask *mask = numa_bitmask_alloc(numa_num_possible_nodes());
-    numa_bitmask_setbit(mask, node_id);
-    numa_bind(mask);
-    numa_bitmask_free(mask);
+  //   background_thread.detach();
+  // }
 
-    background_thread.detach();
+  // Start the background threads, if we haven't done so already.
+  for(int i = 0; i <= numa_max_node(); ++i) {
+    if (!started_background_threads_[i]) {
+      started_background_threads_[i] = true;
+      std::thread background_thread(PosixEnv::BackgroundThreadNodeEntryPoint, this, i);
+
+      background_thread.detach();
+    }
   }
 
   // If the queue is empty, the background thread may be waiting for work.
@@ -919,6 +924,14 @@ void PosixEnv::BackgroundThreadMain() {
 }
 
 void PosixEnv::BackgroundThreadNodeMain(int node_id) {
+  // Bind thread to local PM
+  struct bitmask *mask = numa_bitmask_alloc(numa_num_possible_nodes());
+  numa_bitmask_setbit(mask, node_id);
+  numa_bind(mask);
+  numa_bitmask_free(mask);
+
+  Log(env_info_log, "Background thread node_id: %d, running on cpu %d, node %d\n", node_id, sched_getcpu(), numa_node_of_cpu(sched_getcpu()));
+
   while (true) {
     background_work_mutexs_[node_id]->Lock();
 

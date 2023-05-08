@@ -2,12 +2,15 @@
 #include <string.h>
 #include "leveldb/db.h"
 #include <iostream>
+#include <unistd.h>
+#include <string>
 
 int main(){
     leveldb::DB* db;
     leveldb::Options options;
     options.create_if_missing = true;
-    std::string path = "/home/minedec/testdb";
+    std::string path(getcwd(NULL, 0));
+    path += "/../dbtest";
     leveldb::Status status = leveldb::DB::Open(options,path, &db);
     assert(status.ok());
     std::cout << "db path:" << path << std::endl;
@@ -18,6 +21,15 @@ int main(){
 
     status = db->Put(leveldb::WriteOptions(), key,value);
     assert(status.ok());
+
+    for(int i = random(); i < 10000; i++) {
+        std::string key = "key";
+        key += std::to_string(i);
+        std::string value = "value";
+        value += std::to_string(i);
+        status = db->Put(leveldb::WriteOptions(), key,value);
+        assert(status.ok());
+    }
 
     status = db->Get(leveldb::ReadOptions(), key, &value);
     assert(status.ok());

@@ -170,7 +170,9 @@ class DBImpl : public DB {
   Env* const env_;
   const InternalKeyComparator internal_comparator_;
   const InternalFilterPolicy internal_filter_policy_;
+public:
   const Options options_;  // options_.comparator == &internal_comparator_
+private:
   const bool owns_info_log_;
   const bool owns_cache_;
   const std::string dbname_;

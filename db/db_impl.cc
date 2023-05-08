@@ -296,6 +296,8 @@ void DBImpl::RemoveObsoleteFiles() {
 }
 
 Status DBImpl::Recover(VersionEdit* edit, bool* save_manifest) {
+  Log(options_.info_log, "DB Recover() running on cpu %d, node %d\n", sched_getcpu(), numa_node_of_cpu(sched_getcpu()));
+
   mutex_.AssertHeld();
 
   // Ignore error from CreateDir since the creation of the DB is
@@ -680,6 +682,7 @@ void DBImpl::MaybeScheduleCompaction() {
   } else {
     background_compaction_scheduled_ = true;
     // env_->Schedule(&DBImpl::BGWork, this);
+    env_->env_info_log = options_.info_log;
     env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
   }
 }
@@ -1542,11 +1545,12 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   DBImpl* impl = new DBImpl(options, dbname);
   impl->mutex_.Lock();
 
-  // std::cout << "db main thread: " << gettid() << "\n";
   // Init thread pool
   impl->threadPool = new ThreadPool(1);
   impl->threadPool->m_db = dbptr;
   impl->threadPool->start();
+
+  Log(impl->options_.info_log, "DB Open() running on cpu %d, node %d\n", sched_getcpu(), numa_node_of_cpu(sched_getcpu()));
 
   VersionEdit edit;
   // Recover handles create_if_missing, error_if_exists
