@@ -216,6 +216,12 @@ private:
   Status bg_error_ GUARDED_BY(mutex_);
 
   CompactionStats stats_[config::kNumLevels] GUARDED_BY(mutex_);
+
+  // When recover from log file, use background thread flush memtable
+  std::atomic<bool> need_bgflush_l0 {false};
+  MemTable* recover_mem = nullptr;
+  VersionEdit* recover_edit = nullptr;
+  Status recover_status;
 };
 
 // Sanitize db options.  The caller should delete result.info_log if

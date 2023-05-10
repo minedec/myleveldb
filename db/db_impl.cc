@@ -463,7 +463,21 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
     if (mem->ApproximateMemoryUsage() > options_.write_buffer_size) {
       compactions++;
       *save_manifest = true;
-      status = WriteLevel0Table(mem, edit, nullptr);
+      // status = WriteLevel0Table(mem, edit, nullptr);
+
+      // Use bgthread to flush
+      if(need_bgflush_l0) {
+        Log(options_.info_log, "Already set need_bgflush");
+      }
+      need_bgflush_l0 = true;
+      recover_mem = mem;
+      recover_edit = edit;
+      env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
+      while(need_bgflush_l0);
+      status = recover_status;
+      recover_mem = nullptr;
+      recover_edit = nullptr;
+
       mem->Unref();
       mem = nullptr;
       if (!status.ok()) {
@@ -502,7 +516,20 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
     // mem did not get reused; compact it.
     if (status.ok()) {
       *save_manifest = true;
-      status = WriteLevel0Table(mem, edit, nullptr);
+      // status = WriteLevel0Table(mem, edit, nullptr);
+
+      // Use bgthread to flush
+      if(need_bgflush_l0) {
+        Log(options_.info_log, "Already set need_bgflush");
+      }
+      need_bgflush_l0 = true;
+      recover_mem = mem;
+      recover_edit = edit;
+      env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
+      while(need_bgflush_l0);
+      status = recover_status;
+      recover_mem = nullptr;
+      recover_edit = nullptr;
     }
     mem->Unref();
   }
@@ -512,7 +539,6 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
 
 Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
                                 Version* base) {
-  // std::cout << "writel0table thread is: " << gettid() << "\n";
   mutex_.AssertHeld();
   const uint64_t start_micros = env_->NowMicros();
   FileMetaData meta;
@@ -555,6 +581,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   return s;
 }
 
+// Compact immutable table to level0 table and reset log file
 void DBImpl::CompactMemTable() {
   mutex_.AssertHeld();
   assert(imm_ != nullptr);
@@ -682,7 +709,7 @@ void DBImpl::MaybeScheduleCompaction() {
   } else {
     background_compaction_scheduled_ = true;
     // env_->Schedule(&DBImpl::BGWork, this);
-    env_->env_info_log = options_.info_log;
+    // env_->env_info_log = options_.info_log;
     env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
   }
 }
@@ -692,6 +719,13 @@ void DBImpl::BGWork(void* db) {
 }
 
 void DBImpl::BackgroundCall() {
+  // Check need_flush_l0
+  if(need_bgflush_l0) {
+    recover_status = WriteLevel0Table(recover_mem, recover_edit, nullptr);
+    need_bgflush_l0 = false;
+    return;
+  }
+
   MutexLock l(&mutex_);
   assert(background_compaction_scheduled_);
   if (shutting_down_.load(std::memory_order_acquire)) {
@@ -1551,6 +1585,7 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   impl->threadPool->start();
 
   Log(impl->options_.info_log, "DB Open() running on cpu %d, node %d\n", sched_getcpu(), numa_node_of_cpu(sched_getcpu()));
+  impl->env_->env_info_log = impl->options_.info_log;
 
   VersionEdit edit;
   // Recover handles create_if_missing, error_if_exists
