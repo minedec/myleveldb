@@ -1,0 +1,3 @@
+/home/jjd/myleveldb/test/pmdktest/CMakeFiles/rebuild_cache.dir
+/home/jjd/myleveldb/test/pmdktest/CMakeFiles/edit_cache.dir
+/home/jjd/myleveldb/test/pmdktest/CMakeFiles/pmtest.dir
