@@ -1,1 +1,1 @@
-/usr/bin/c++ -rdynamic CMakeFiles/pmtest.dir/pmtest.o -o pmtest  -lpmempool -lpmemobj -lpthread -lstdc++fs 
+/usr/bin/c++ -rdynamic CMakeFiles/pmtest.dir/pmtest.o -o pmtest   -L/usr/local/lib  -Wl,-rpath,/usr/local/lib -lpmemobj 

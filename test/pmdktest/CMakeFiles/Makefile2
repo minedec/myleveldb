@@ -72,6 +72,7 @@ CMAKE_BINARY_DIR = /home/jjd/myleveldb/test/pmdktest
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
+all: CMakeFiles/pmemobjtest.dir/all
 all: CMakeFiles/pmtest.dir/all
 
 .PHONY : all
@@ -82,9 +83,37 @@ preinstall:
 .PHONY : preinstall
 
 # The main recursive "clean" target.
+clean: CMakeFiles/pmemobjtest.dir/clean
 clean: CMakeFiles/pmtest.dir/clean
 
 .PHONY : clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/pmemobjtest.dir
+
+# All Build rule for target.
+CMakeFiles/pmemobjtest.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/jjd/myleveldb/test/pmdktest/CMakeFiles --progress-num=1,2 "Built target pmemobjtest"
+.PHONY : CMakeFiles/pmemobjtest.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/pmemobjtest.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/jjd/myleveldb/test/pmdktest/CMakeFiles 2
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/pmemobjtest.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/jjd/myleveldb/test/pmdktest/CMakeFiles 0
+.PHONY : CMakeFiles/pmemobjtest.dir/rule
+
+# Convenience name for target.
+pmemobjtest: CMakeFiles/pmemobjtest.dir/rule
+
+.PHONY : pmemobjtest
+
+# clean rule for target.
+CMakeFiles/pmemobjtest.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/clean
+.PHONY : CMakeFiles/pmemobjtest.dir/clean
 
 #=============================================================================
 # Target rules for target CMakeFiles/pmtest.dir
@@ -93,7 +122,7 @@ clean: CMakeFiles/pmtest.dir/clean
 CMakeFiles/pmtest.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmtest.dir/build.make CMakeFiles/pmtest.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmtest.dir/build.make CMakeFiles/pmtest.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/jjd/myleveldb/test/pmdktest/CMakeFiles --progress-num=1,2 "Built target pmtest"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=/home/jjd/myleveldb/test/pmdktest/CMakeFiles --progress-num=3,4 "Built target pmtest"
 .PHONY : CMakeFiles/pmtest.dir/all
 
 # Build rule for subdir invocation for target.

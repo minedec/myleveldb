@@ -130,6 +130,19 @@ depend:
 .PHONY : depend
 
 #=============================================================================
+# Target rules for targets named pmemobjtest
+
+# Build rule for target.
+pmemobjtest: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 pmemobjtest
+.PHONY : pmemobjtest
+
+# fast build rule for target.
+pmemobjtest/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/build
+.PHONY : pmemobjtest/fast
+
+#=============================================================================
 # Target rules for targets named pmtest
 
 # Build rule for target.
@@ -141,6 +154,21 @@ pmtest: cmake_check_build_system
 pmtest/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmtest.dir/build.make CMakeFiles/pmtest.dir/build
 .PHONY : pmtest/fast
+
+# target to build an object file
+pmemobjtest.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/pmemobjtest.o
+.PHONY : pmemobjtest.o
+
+# target to preprocess a source file
+pmemobjtest.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/pmemobjtest.i
+.PHONY : pmemobjtest.i
+
+# target to generate assembly for a file
+pmemobjtest.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/pmemobjtest.s
+.PHONY : pmemobjtest.s
 
 # target to build an object file
 pmtest.o:
@@ -165,7 +193,11 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... pmemobjtest"
 	@echo "... pmtest"
+	@echo "... pmemobjtest.o"
+	@echo "... pmemobjtest.i"
+	@echo "... pmemobjtest.s"
 	@echo "... pmtest.o"
 	@echo "... pmtest.i"
 	@echo "... pmtest.s"
