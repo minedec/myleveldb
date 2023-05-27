@@ -709,7 +709,6 @@ void DBImpl::MaybeScheduleCompaction() {
   } else {
     background_compaction_scheduled_ = true;
     // env_->Schedule(&DBImpl::BGWork, this);
-    // env_->env_info_log = options_.info_log;
     env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
   }
 }
@@ -1198,6 +1197,9 @@ void DBImpl::GetWrapper(std::promise<Status>* promise, const ReadOptions& option
       // Done
     } else if (imm != nullptr && imm->Get(lkey, value, &s)) {
       // Done
+    } else if (mem_hashtable_->countKey(lkey)) {
+      s = mem_hashtable_->getValue(options, lkey, value, &stats);
+      have_stat_update = true;
     } else {
       s = current->Get(options, lkey, value, &stats);
       have_stat_update = true;
@@ -1579,13 +1581,17 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   DBImpl* impl = new DBImpl(options, dbname);
   impl->mutex_.Lock();
 
-  // Init thread pool
+  // Init thread pool, PMDB
   impl->threadPool = new ThreadPool(1);
   impl->threadPool->m_db = dbptr;
   impl->threadPool->start();
 
   Log(impl->options_.info_log, "DB Open() running on cpu %d, node %d\n", sched_getcpu(), numa_node_of_cpu(sched_getcpu()));
   impl->env_->env_info_log = impl->options_.info_log;
+
+  // Init MemHashTable, PMDB
+  impl->mem_hashtable_ = new MemHashTable();
+  impl->mem_hashtable_->versions_ = impl->versions_;
 
   VersionEdit edit;
   // Recover handles create_if_missing, error_if_exists
@@ -1657,5 +1663,23 @@ Status DestroyDB(const std::string& dbname, const Options& options) {
   }
   return result;
 }
+
+// MemHashTable Methods
+bool MemHashTable::countKey(LookupKey &key) {
+  Slice ikey = key.internal_key();
+  return memhashtable_.count(ikey);
+}
+
+Status MemHashTable::getValue(ReadOptions const &options, LookupKey const &lkey, std::string *value, Version::GetStats *stats) {
+  Slice ikey = lkey.internal_key();
+  if(memhashtable_.count(ikey)) {
+    MemHashTableValue memhash_value = memhashtable_[ikey];
+    FileMetaData* f = 
+
+    ->table_cache_->Get()
+
+  }
+}
+
 
 }  // namespace leveldb

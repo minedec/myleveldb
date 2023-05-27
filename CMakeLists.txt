@@ -290,7 +290,7 @@ target_link_libraries(leveldb Threads::Threads)
 add_executable(leveldbutil
   "db/leveldbutil.cc"
 )
-target_link_libraries(leveldbutil leveldb numa)
+target_link_libraries(leveldbutil leveldb numa pmem)
 
 if(LEVELDB_BUILD_TESTS)
   enable_testing()
@@ -352,7 +352,7 @@ if(LEVELDB_BUILD_TESTS)
         "util/logging_test.cc"
     )
   endif(NOT BUILD_SHARED_LIBS)
-  target_link_libraries(leveldb_tests leveldb gmock gtest gtest_main numa)
+  target_link_libraries(leveldb_tests leveldb gmock gtest gtest_main numa pmem)
   target_compile_definitions(leveldb_tests
     PRIVATE
       ${LEVELDB_PLATFORM_NAME}=1
@@ -378,7 +378,7 @@ if(LEVELDB_BUILD_TESTS)
 
         "${test_file}"
     )
-    target_link_libraries("${test_target_name}" leveldb gmock gtest numa)
+    target_link_libraries("${test_target_name}" leveldb gmock gtest numa pmem)
     target_compile_definitions("${test_target_name}"
       PRIVATE
         ${LEVELDB_PLATFORM_NAME}=1
@@ -426,7 +426,7 @@ if(LEVELDB_BUILD_BENCHMARKS)
 
         "${bench_file}"
     )
-    target_link_libraries("${bench_target_name}" leveldb gmock gtest benchmark numa)
+    target_link_libraries("${bench_target_name}" leveldb gmock gtest benchmark numa pmem)
     target_compile_definitions("${bench_target_name}"
       PRIVATE
         ${LEVELDB_PLATFORM_NAME}=1

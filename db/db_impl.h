@@ -26,6 +26,7 @@ class TableCache;
 class Version;
 class VersionEdit;
 class VersionSet;
+class MemHashTable;
 
 class DBImpl : public DB {
  public:
@@ -83,6 +84,9 @@ class DBImpl : public DB {
 
  private:
   friend class DB;
+
+  friend class MemHashTable;
+
   struct CompactionState;
   struct Writer;
   class ThreadPool* threadPool;
@@ -111,6 +115,8 @@ class DBImpl : public DB {
     int64_t bytes_read;
     int64_t bytes_written;
   };
+
+  
 
   Iterator* NewInternalIterator(const ReadOptions&,
                                 SequenceNumber* latest_snapshot,
@@ -222,6 +228,11 @@ private:
   MemTable* recover_mem = nullptr;
   VersionEdit* recover_edit = nullptr;
   Status recover_status;
+
+public:
+  // Use hashtable to get value from sstable
+  MemHashTable* mem_hashtable_ = nullptr;
+  std::unordered_map<Slice, MemHashTableValue> memhashtable_;
 };
 
 // Sanitize db options.  The caller should delete result.info_log if
@@ -230,6 +241,35 @@ Options SanitizeOptions(const std::string& db,
                         const InternalKeyComparator* icmp,
                         const InternalFilterPolicy* ipolicy,
                         const Options& src);
+
+// MemHashTable
+class MemHashTableValue {
+      public:
+        uint64_t sstable_file_number_;
+        uint64_t offset_;
+    };
+
+class MemHashTable {
+  public:
+    
+
+    // Hashtable for searching kv in sstable
+    // key is internal Key of KV pair
+    // value is sstable file ID and offset of file
+    std::unordered_map<Slice, MemHashTableValue> memhashtable_;
+    VersionSet* versions_ = nullptr;
+
+    Status setValue(Slice key, MemHashTableValue value);
+
+    Status getValue(ReadOptions const &options, LookupKey const & key, std::string *value, Version::GetStats* stats);
+
+    void deleteKey(Slice key);
+
+    bool countKey(LookupKey &key);
+
+    
+};
+
 
 }  // namespace leveldb
 
