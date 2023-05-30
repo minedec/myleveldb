@@ -220,6 +220,7 @@ class LEVELDB_EXPORT Env {
   // Sleep/delay the thread for the prescribed number of micro-seconds.
   virtual void SleepForMicroseconds(int micros) = 0;
 
+  // PMDB to record log
   Logger* env_info_log;
 };
 

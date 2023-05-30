@@ -23,6 +23,7 @@
 #include "db/version_edit.h"
 #include "port/port.h"
 #include "port/thread_annotations.h"
+#include "db/db_impl.h"
 
 namespace leveldb {
 
@@ -148,6 +149,9 @@ class Version {
 public:
   VersionSet* vset_;  // VersionSet to which this Version belongs
 private:
+  //PMDB friend class
+  friend class MemHashTable;
+
   Version* next_;     // Next version in linked list
   Version* prev_;     // Previous version in linked list
   int refs_;          // Number of live refs to this version
@@ -276,6 +280,9 @@ class VersionSet {
 
   friend class Compaction;
   friend class Version;
+
+  // PMDB add friend MemHashTable
+  friend class MemHashTable;
 
   bool ReuseManifest(const std::string& dscname, const std::string& dscbase);
 

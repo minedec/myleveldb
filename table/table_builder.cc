@@ -16,6 +16,8 @@
 #include "util/coding.h"
 #include "util/crc32c.h"
 
+#include "db/db_impl.h"
+
 namespace leveldb {
 
 struct TableBuilder::Rep {
@@ -60,6 +62,9 @@ struct TableBuilder::Rep {
   BlockHandle pending_handle;  // Handle to add to index block
 
   std::string compressed_output;
+
+  // PMDB temporaily store insert key, when finish block, add block handle encoding
+  std::vector<ParsedInternalKey> tmp_keys;
 };
 
 TableBuilder::TableBuilder(const Options& options, WritableFile* file)
@@ -104,13 +109,38 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
     r->options.comparator->FindShortestSeparator(&r->last_key, key);
     std::string handle_encoding;
     r->pending_handle.EncodeTo(&handle_encoding);
-    r->index_block.Add(r->last_key, Slice(handle_encoding));
+    r->index_block.Add(r->last_key, Slice(handle_encoding));  
     r->pending_index_entry = false;
+
+    printf("add block handle offset %ld, size %ld\n", r->pending_handle.offset(), r->pending_handle.size());
+
+    // PMDB add handle index encoding
+    for(ParsedInternalKey ikey : r->tmp_keys) {
+      MemHashTableValue* v = DBImpl::dbimpl_instance->mem_hashtable_->getTableValue(ikey.user_key);
+      if(v == nullptr && ikey.type == kTypeDeletion) {
+        //Pass
+      } else if (v == nullptr && ikey.type != kTypeDeletion) {
+        // Delete key
+        DBImpl::dbimpl_instance->mem_hashtable_->deleteKey(ikey.user_key);
+      } else {
+        v->block_handle_encoding_ = std::string(handle_encoding);
+        BlockHandle bh;
+        bh.DecodeFrom(new Slice(v->block_handle_encoding_));
+        printf("add hash block handle offset %ld, size %ld, user key %s\n", bh.offset(), bh.size(), ikey.user_key.ToString().c_str());
+        DBImpl::dbimpl_instance->mem_hashtable_->setValue(ikey.user_key, v);
+      }
+    }
+    r->tmp_keys.clear();
   }
 
   if (r->filter_block != nullptr) {
     r->filter_block->AddKey(key);
   }
+
+  // PMDB add key to tmp_keys
+  ParsedInternalKey ikey;
+  ParseInternalKey(key, &ikey);
+  r->tmp_keys.push_back(ikey);
 
   r->last_key.assign(key.data(), key.size());
   r->num_entries++;

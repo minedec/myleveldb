@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 #include <future>
+#include <unordered_map>
 
 #include "db/dbformat.h"
 #include "db/log_writer.h"
@@ -18,6 +19,7 @@
 #include "leveldb/env.h"
 #include "port/port.h"
 #include "port/thread_annotations.h"
+#include "db/version_set.h"
 
 namespace leveldb {
 
@@ -232,7 +234,8 @@ private:
 public:
   // Use hashtable to get value from sstable
   MemHashTable* mem_hashtable_ = nullptr;
-  std::unordered_map<Slice, MemHashTableValue> memhashtable_;
+  // PMDB global db instance
+  static DBImpl* dbimpl_instance;
 };
 
 // Sanitize db options.  The caller should delete result.info_log if
@@ -244,30 +247,37 @@ Options SanitizeOptions(const std::string& db,
 
 // MemHashTable
 class MemHashTableValue {
-      public:
-        uint64_t sstable_file_number_;
-        uint64_t offset_;
-    };
+  public:
+    uint64_t sstable_file_number_ = -1;
+    uint64_t sstable_file_size_ = -1;
+    uint64_t offset_ = -1;
+    std::string block_handle_encoding_ = "";
+
+    MemHashTableValue() {}
+
+    ~MemHashTableValue(); 
+};
 
 class MemHashTable {
   public:
-    
+    void setValue(Slice &key, MemHashTableValue* value);
 
-    // Hashtable for searching kv in sstable
-    // key is internal Key of KV pair
-    // value is sstable file ID and offset of file
-    std::unordered_map<Slice, MemHashTableValue> memhashtable_;
-    VersionSet* versions_ = nullptr;
+    Status getValue(ReadOptions const &options, LookupKey const & key, std::string *value);
 
-    Status setValue(Slice key, MemHashTableValue value);
-
-    Status getValue(ReadOptions const &options, LookupKey const & key, std::string *value, Version::GetStats* stats);
-
-    void deleteKey(Slice key);
+    void deleteKey(Slice &key);
 
     bool countKey(LookupKey &key);
 
-    
+    MemHashTableValue* getTableValue(Slice &key);
+
+    ~MemHashTable();
+
+    // Hashtable for searching kv in sstable
+    // key is user Key of KV pair, not contain sequence number
+    // value is sstable file ID and offset of file
+    std::unordered_map<std::string, MemHashTableValue*> mem_hash_table_;
+    VersionSet* versions_ = nullptr;
+    // Version::GetStats stats;
 };
 
 
