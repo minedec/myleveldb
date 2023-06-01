@@ -566,6 +566,8 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   {
     mutex_.Unlock();
 
+    s = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta);
+    
     // PMDB add key value to hash table
     // If keytype is kTypeDeletion, not add to hash map
     // Not consider sequence number, if delete a key in hash table, get a key 
@@ -576,29 +578,18 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
     for(;iter->Valid(); iter->Next()) {
       key = iter->key();
       ParseInternalKey(key, &ikey);
-      if(ikey.type == kTypeDeletion) {
-        mem_hashtable_->deleteKey(ikey.user_key);
-        continue;
-      }
       MemHashTableValue* v = mem_hashtable_->getTableValue(ikey.user_key);
+      assert(ikey.type != kTypeDeletion);
       if(v == nullptr) {
+        // printf("write l0 table user key %s is empty\n", ikey.user_key.ToString().c_str());
         v = new MemHashTableValue();
       }
       v->sstable_file_number_ = meta.number;
-      mem_hashtable_->setValue(ikey.user_key, v);
-    }
-
-    s = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta);
-
-    iter->SeekToFirst();
-    for(;iter->Valid(); iter->Next()) {
-      Slice key = iter->key();
-      ParseInternalKey(key, &ikey);
-      MemHashTableValue* v = mem_hashtable_->getTableValue(ikey.user_key);
       v->sstable_file_size_ = meta.file_size;
-      printf("wlt file number %ld, file size %ld, user key %s\n", v->sstable_file_number_, v->sstable_file_size_, ikey.user_key.ToString().c_str());
+      // printf("wlt file number %ld, file size %ld, user key %s\n", v->sstable_file_number_, v->sstable_file_size_, ikey.user_key.ToString().c_str());
       mem_hashtable_->setValue(ikey.user_key, v);
     }
+    // printf("write level0 table number %ld finish\n", meta.number);
 
     mutex_.Lock();
   }
@@ -1111,14 +1102,14 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
           MemHashTableValue* v = mem_hashtable_->getTableValue(ikey.user_key);
           if(v == nullptr) {
             v = new MemHashTableValue();
-            printf("userkey %s compaction value is empty\n", ikey.user_key.ToString().c_str());
+            // printf("userkey %s compaction value is empty\n", ikey.user_key.ToString().c_str());
           } else {
-            printf("userkey %s compaction value not empty\n", ikey.user_key.ToString().c_str());
+            // printf("userkey %s compaction value not empty\n", ikey.user_key.ToString().c_str());
           }
           v->sstable_file_number_ = compact->current_output()->number;
           v->sstable_file_size_ = compact->current_output()->file_size;
 
-          printf("docompactwork file number %ld, file size %ld, user key %s\n", v->sstable_file_number_, v->sstable_file_size_, ikey.user_key.ToString().c_str());
+          // printf("docompactwork file number %ld, file size %ld, user key %s\n", v->sstable_file_number_, v->sstable_file_size_, ikey.user_key.ToString().c_str());
           mem_hashtable_->setValue(ikey.user_key, v);
         }
         compact->tmp_keys.clear();
@@ -1779,17 +1770,17 @@ Status MemHashTable::getValue(ReadOptions const &options, LookupKey const &lkey,
     if(hashtable_value->block_handle_encoding_.empty()) {
       s = t->InternalGet(options, ikey, &saver, SaveValue);
     } else {
-      BlockHandle bh;
-      if(!mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()) {
-        Slice* ts = new Slice(mem_hash_table_[ukey.ToString()]->block_handle_encoding_);
-        bh.DecodeFrom(ts);
-      }
-      printf("get value file number %ld, file size %ld, block offset %ld, block size %ld, user key %s\n",
-        mem_hash_table_[ukey.ToString()]->sstable_file_number_,
-        mem_hash_table_[ukey.ToString()]->sstable_file_size_,
-        mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()? -2:bh.offset(),
-        mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()? -2:bh.size(), 
-        ukey.ToString().c_str());
+      // BlockHandle bh;
+      // if(!mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()) {
+      //   Slice* ts = new Slice(mem_hash_table_[ukey.ToString()]->block_handle_encoding_);
+      //   bh.DecodeFrom(ts);
+      // }
+      // printf("get value file number %ld, file size %ld, block offset %ld, block size %ld, user key %s\n",
+      //   mem_hash_table_[ukey.ToString()]->sstable_file_number_,
+      //   mem_hash_table_[ukey.ToString()]->sstable_file_size_,
+      //   mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()? -2:bh.offset(),
+      //   mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()? -2:bh.size(), 
+      //   ukey.ToString().c_str());
 
       Iterator* block_iter = t->BlockReader(t, options, Slice(hashtable_value->block_handle_encoding_));
       block_iter->Seek(ikey);
@@ -1806,17 +1797,21 @@ Status MemHashTable::getValue(ReadOptions const &options, LookupKey const &lkey,
 
 void MemHashTable::setValue(Slice &ukey, MemHashTableValue *value) {
   mem_hash_table_[ukey.ToString()] = value;
-  BlockHandle bh;
-  if(!mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()) {
-    Slice* ts = new Slice(mem_hash_table_[ukey.ToString()]->block_handle_encoding_);
-    bh.DecodeFrom(ts);
-  }
-  printf("set value file number %ld, file size %ld, block offset %ld, block size %ld, user key %s\n",
-    mem_hash_table_[ukey.ToString()]->sstable_file_number_,
-    mem_hash_table_[ukey.ToString()]->sstable_file_size_,
-    mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()? -2:bh.offset(),
-    mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()? -2:bh.size(), 
-    ukey.ToString().c_str());
+  // BlockHandle bh;
+  // if(!value->block_handle_encoding_.empty()) {
+  //   Slice* ts = new Slice(value->block_handle_encoding_);
+  //   bh.DecodeFrom(ts);
+  // }
+  // std::string us = ukey.ToString();
+  // const char* cs = ukey.ToString().c_str();
+  // printf("set value file number %ld, file size %ld, block offset %ld, block size %ld, user key %s\n",
+  //   value->sstable_file_number_,
+  //   value->sstable_file_size_,
+  //   value->block_handle_encoding_.empty()? -2
+  //     :bh.offset(),
+  //   value->block_handle_encoding_.empty()? -2
+  //     :bh.size(), 
+  //   ukey.ToString().c_str());
 }
 
 MemHashTableValue* MemHashTable::getTableValue(Slice& ukey) {
