@@ -1,0 +1,18 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/jjd/myleveldb/test/pmdktest/pmemlibtest.cpp
+iostream
+-
+libpmem.h
+-
+string
+-
+memory.h
+-
+

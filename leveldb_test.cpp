@@ -15,6 +15,8 @@ int main(){
     assert(status.ok());
     std::cout << "db path:" << path << std::endl;
 
+    std::cout << "leveldb_test start" << std::endl;
+
     //write key1,value1
     std::string key="key";
     std::string value = "value";
@@ -22,11 +24,11 @@ int main(){
     status = db->Put(leveldb::WriteOptions(), key,value);
     assert(status.ok());
 
-    for(int i = random(); i < 10000; i++) {
+    for(int i = 0; i < 10000; i++) {
         std::string key = "key";
-        key += std::to_string(i);
+        key += std::to_string(random());
         std::string value = "value";
-        value += std::to_string(i);
+        value += std::to_string(random());
         status = db->Put(leveldb::WriteOptions(), key,value);
         assert(status.ok());
     }
@@ -53,6 +55,8 @@ int main(){
     
     if(!status.ok()) std::cerr<<key<<"  "<<status.ToString()<<std::endl;
     else std::cout<< "key:" << key << " value:" <<value<<std::endl;
+
+    std::cout << "leveldb_test end" << std::endl;
     
     delete db;
     return 0;

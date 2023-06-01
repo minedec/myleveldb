@@ -6,11 +6,14 @@
 #define STORAGE_LEVELDB_DB_MEMTABLE_H_
 
 #include <string>
+#include <unordered_map>
 
 #include "db/dbformat.h"
 #include "db/skiplist.h"
 #include "leveldb/db.h"
 #include "util/arena.h"
+
+#include "db/version_set.h"
 
 namespace leveldb {
 

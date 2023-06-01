@@ -1,0 +1,32 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/jjd/myleveldb/test/pmdktest/pmhello.cpp
+pmhello.h
+/home/jjd/myleveldb/test/pmdktest/pmhello.h
+error.h
+-
+
+/home/jjd/myleveldb/test/pmdktest/pmhello.h
+libpmemobj++/make_persistent.hpp
+-
+libpmemobj++/make_persistent_atomic.hpp
+-
+libpmemobj++/p.hpp
+-
+libpmemobj++/persistent_ptr.hpp
+-
+libpmemobj++/pool.hpp
+-
+fstream
+-
+iostream
+-
+string.h
+-
+

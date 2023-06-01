@@ -14,6 +14,7 @@
 #include "leveldb/cache.h"
 #include "leveldb/table.h"
 #include "port/port.h"
+#include "db/db_impl.h"
 
 namespace leveldb {
 
@@ -48,6 +49,9 @@ class TableCache {
   void Evict(uint64_t file_number);
 
  private:
+  //PMDB friend class MemHashTable
+  friend MemHashTable;
+  
   Status FindTable(uint64_t file_number, uint64_t file_size, Cache::Handle**);
 
   Env* const env_;

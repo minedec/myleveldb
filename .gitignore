@@ -1,1 +1,5 @@
 /build
+perf.data*
+/dbtest
+/script/logggg
+/script/core

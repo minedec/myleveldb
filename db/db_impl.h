@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 #include <future>
+#include <unordered_map>
 
 #include "db/dbformat.h"
 #include "db/log_writer.h"
@@ -18,6 +19,7 @@
 #include "leveldb/env.h"
 #include "port/port.h"
 #include "port/thread_annotations.h"
+#include "db/version_set.h"
 
 namespace leveldb {
 
@@ -26,6 +28,7 @@ class TableCache;
 class Version;
 class VersionEdit;
 class VersionSet;
+class MemHashTable;
 
 class DBImpl : public DB {
  public:
@@ -83,6 +86,9 @@ class DBImpl : public DB {
 
  private:
   friend class DB;
+
+  friend class MemHashTable;
+
   struct CompactionState;
   struct Writer;
   class ThreadPool* threadPool;
@@ -111,6 +117,8 @@ class DBImpl : public DB {
     int64_t bytes_read;
     int64_t bytes_written;
   };
+
+  
 
   Iterator* NewInternalIterator(const ReadOptions&,
                                 SequenceNumber* latest_snapshot,
@@ -222,6 +230,12 @@ private:
   MemTable* recover_mem = nullptr;
   VersionEdit* recover_edit = nullptr;
   Status recover_status;
+
+public:
+  // Use hashtable to get value from sstable
+  MemHashTable* mem_hashtable_ = nullptr;
+  // PMDB global db instance
+  static DBImpl* dbimpl_instance;
 };
 
 // Sanitize db options.  The caller should delete result.info_log if
@@ -230,6 +244,42 @@ Options SanitizeOptions(const std::string& db,
                         const InternalKeyComparator* icmp,
                         const InternalFilterPolicy* ipolicy,
                         const Options& src);
+
+// MemHashTable
+class MemHashTableValue {
+  public:
+    uint64_t sstable_file_number_ = -1;
+    uint64_t sstable_file_size_ = -1;
+    uint64_t offset_ = -1;
+    std::string block_handle_encoding_ = "";
+
+    MemHashTableValue() {}
+
+    ~MemHashTableValue(); 
+};
+
+class MemHashTable {
+  public:
+    void setValue(Slice &key, MemHashTableValue* value);
+
+    Status getValue(ReadOptions const &options, LookupKey const & key, std::string *value);
+
+    void deleteKey(Slice &key);
+
+    bool countKey(LookupKey &key);
+
+    MemHashTableValue* getTableValue(Slice &key);
+
+    ~MemHashTable();
+
+    // Hashtable for searching kv in sstable
+    // key is user Key of KV pair, not contain sequence number
+    // value is sstable file ID and offset of file
+    std::unordered_map<std::string, MemHashTableValue*> mem_hash_table_;
+    VersionSet* versions_ = nullptr;
+    // Version::GetStats stats;
+};
+
 
 }  // namespace leveldb
 

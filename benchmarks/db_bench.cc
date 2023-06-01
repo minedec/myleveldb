@@ -1130,6 +1130,7 @@ int main(int argc, char** argv) {
     leveldb::g_env->GetTestDirectory(&default_db_path);
     default_db_path += "/dbbench";
     FLAGS_db = default_db_path.c_str();
+    std::cout << default_db_path << std::endl;
   }
 
   leveldb::Benchmark benchmark;

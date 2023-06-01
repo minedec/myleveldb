@@ -9,6 +9,7 @@
 
 #include "leveldb/export.h"
 #include "leveldb/iterator.h"
+#include "db/db_impl.h"
 
 namespace leveldb {
 
@@ -60,6 +61,10 @@ class LEVELDB_EXPORT Table {
 
  private:
   friend class TableCache;
+
+  //PMDB friend
+  friend class MemHashTable;
+
   struct Rep;
 
   static Iterator* BlockReader(void*, const ReadOptions&, const Slice&);

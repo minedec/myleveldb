@@ -1,0 +1,1 @@
+/usr/bin/c++ -rdynamic CMakeFiles/pmhello.dir/pmhello.o -o pmhello   -L/usr/local/lib  -Wl,-rpath,/usr/local/lib -lpmemobj 

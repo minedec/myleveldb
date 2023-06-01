@@ -39,6 +39,8 @@
 #include "util/posix_logger.h"
 #include "../db/db_impl.h"
 
+#include "libpmem.h"
+
 namespace leveldb {
 
 namespace {
@@ -836,18 +838,11 @@ PosixEnv::PosixEnv()
         for(int i = 0; i < node_num; ++i) {
           background_work_mutexs_.push_back(new port::Mutex());
         }
-        // background_work_cvs_.resize(node_num);
         for(int i = 0; i < node_num; ++i) {
           background_work_cvs_.push_back(new port::CondVar(background_work_mutexs_[i]));
         }
         started_background_threads_.resize(node_num, false);
-        // for(int i = 0; i < node_num; ++i) {
-        //   started_background_threads_[i] GUARDED_BY(background_work_mutexs[i]);
-        // }
         background_work_queues_.resize(node_num);
-        // for(int i = 0; i < node_num; ++i) {
-        //   background_work_queues_[i] GUARDED_BY(background_work_mutexs[i]);
-        // }
       }
 
 void PosixEnv::Schedule(
@@ -876,20 +871,12 @@ void PosixEnv::ScheduleNuma(
     void* background_work_arg, int node_id) {
   background_work_mutexs_[node_id]->Lock();
 
-  // // Start the background thread, if we haven't done so already.
-  // if (!started_background_threads_[node_id]) {
-  //   started_background_threads_[node_id] = true;
-  //   std::thread background_thread(PosixEnv::BackgroundThreadNodeEntryPoint, this, node_id);
-
-  //   background_thread.detach();
-  // }
-
   // Start the background threads, if we haven't done so already.
   for(int i = 0; i <= numa_max_node(); ++i) {
     if (!started_background_threads_[i]) {
       started_background_threads_[i] = true;
       std::thread background_thread(PosixEnv::BackgroundThreadNodeEntryPoint, this, i);
-
+      Log(env_info_log, "Start thread on node_id: %d\n", i);
       background_thread.detach();
     }
   }
@@ -941,6 +928,7 @@ void PosixEnv::BackgroundThreadNodeMain(int node_id) {
     }
 
     assert(!background_work_queues_[node_id].empty());
+
     auto background_work_function = background_work_queues_[node_id].front().function;
     void* background_work_arg = background_work_queues_[node_id].front().arg;
     background_work_queues_[node_id].pop();

@@ -19,6 +19,8 @@
 
 #include "leveldb/env.h"
 
+#include "libpmem.h"
+
 namespace leveldb {
 
 class PosixLogger final : public Logger {
