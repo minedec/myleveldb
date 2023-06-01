@@ -1,0 +1,63 @@
+(base) root@omega:/home/jjd/myleveldb/script# sh perf_local.sh 
+LevelDB:    version 1.23
+Date:       Thu Jun  1 10:52:35 2023
+CPU:        80 * Intel(R) Xeon(R) Gold 6230 CPU @ 2.10GHz
+CPUCache:   28160 KB
+Keys:       16 bytes each
+Values:     100 bytes each (50 bytes after compression)
+Entries:    1000000
+RawSize:    110.6 MB (estimated)
+FileSize:   62.9 MB (estimated)
+WARNING: Optimization is disabled: benchmarks unnecessarily slow
+WARNING: Assertions are enabled; benchmarks unnecessarily slow
+------------------------------------------------
+fillseq      :       5.501 micros/op;   20.1 MB/s     
+[ perf record: Woken up 20 times to write data ]
+[ perf record: Captured and wrote 4.979 MB perf.data (27040 samples) ]
+LevelDB:    version 1.23
+Date:       Thu Jun  1 10:52:41 2023
+CPU:        80 * Intel(R) Xeon(R) Gold 6230 CPU @ 2.10GHz
+CPUCache:   28160 KB
+Keys:       16 bytes each
+Values:     100 bytes each (50 bytes after compression)
+Entries:    1000000
+RawSize:    110.6 MB (estimated)
+FileSize:   62.9 MB (estimated)
+WARNING: Optimization is disabled: benchmarks unnecessarily slow
+WARNING: Assertions are enabled; benchmarks unnecessarily slow
+------------------------------------------------
+fillrandom   :       6.234 micros/op;   17.7 MB/s     
+[ perf record: Woken up 31 times to write data ]
+[ perf record: Captured and wrote 7.677 MB perf.data (41534 samples) ]
+LevelDB:    version 1.23
+Date:       Thu Jun  1 10:52:47 2023
+CPU:        80 * Intel(R) Xeon(R) Gold 6230 CPU @ 2.10GHz
+CPUCache:   28160 KB
+Keys:       16 bytes each
+Values:     100 bytes each (50 bytes after compression)
+Entries:    1000000
+RawSize:    110.6 MB (estimated)
+FileSize:   62.9 MB (estimated)
+WARNING: Optimization is disabled: benchmarks unnecessarily slow
+WARNING: Assertions are enabled; benchmarks unnecessarily slow
+------------------------------------------------
+fillrandom   :       6.173 micros/op;   17.9 MB/s     
+readseq      :       0.887 micros/op;  124.7 MB/s    
+[ perf record: Woken up 33 times to write data ]
+[ perf record: Captured and wrote 8.412 MB perf.data (45630 samples) ]
+LevelDB:    version 1.23
+Date:       Thu Jun  1 10:52:55 2023
+CPU:        80 * Intel(R) Xeon(R) Gold 6230 CPU @ 2.10GHz
+CPUCache:   28160 KB
+Keys:       16 bytes each
+Values:     100 bytes each (50 bytes after compression)
+Entries:    1000000
+RawSize:    110.6 MB (estimated)
+FileSize:   62.9 MB (estimated)
+WARNING: Optimization is disabled: benchmarks unnecessarily slow
+WARNING: Assertions are enabled; benchmarks unnecessarily slow
+------------------------------------------------
+fillrandom   :       6.139 micros/op;   18.0 MB/s     
+readrandom   :       9.079 micros/op; (632150 of 1000000 found)
+[ perf record: Woken up 59 times to write data ]
+[ perf record: Captured and wrote 14.971 MB perf.data (82979 samples) ]

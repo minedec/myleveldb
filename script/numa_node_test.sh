@@ -1,0 +1,1 @@
+./../build/db_bench --benchmarks="fillseq,fillrandom,readrandom,readseq" --db="/mnt/pmem0/dbtest"
