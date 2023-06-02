@@ -130,60 +130,60 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named pmemobjtest
+# Target rules for targets named pmemlibtest
 
 # Build rule for target.
-pmemobjtest: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 pmemobjtest
-.PHONY : pmemobjtest
+pmemlibtest: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 pmemlibtest
+.PHONY : pmemlibtest
 
 # fast build rule for target.
-pmemobjtest/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/build
-.PHONY : pmemobjtest/fast
+pmemlibtest/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemlibtest.dir/build.make CMakeFiles/pmemlibtest.dir/build
+.PHONY : pmemlibtest/fast
 
 #=============================================================================
-# Target rules for targets named pmtest
+# Target rules for targets named pmhello
 
 # Build rule for target.
-pmtest: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 pmtest
-.PHONY : pmtest
+pmhello: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 pmhello
+.PHONY : pmhello
 
 # fast build rule for target.
-pmtest/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmtest.dir/build.make CMakeFiles/pmtest.dir/build
-.PHONY : pmtest/fast
+pmhello/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmhello.dir/build.make CMakeFiles/pmhello.dir/build
+.PHONY : pmhello/fast
 
 # target to build an object file
-pmemobjtest.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/pmemobjtest.o
-.PHONY : pmemobjtest.o
+pmemlibtest.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemlibtest.dir/build.make CMakeFiles/pmemlibtest.dir/pmemlibtest.o
+.PHONY : pmemlibtest.o
 
 # target to preprocess a source file
-pmemobjtest.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/pmemobjtest.i
-.PHONY : pmemobjtest.i
+pmemlibtest.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemlibtest.dir/build.make CMakeFiles/pmemlibtest.dir/pmemlibtest.i
+.PHONY : pmemlibtest.i
 
 # target to generate assembly for a file
-pmemobjtest.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemobjtest.dir/build.make CMakeFiles/pmemobjtest.dir/pmemobjtest.s
-.PHONY : pmemobjtest.s
+pmemlibtest.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmemlibtest.dir/build.make CMakeFiles/pmemlibtest.dir/pmemlibtest.s
+.PHONY : pmemlibtest.s
 
 # target to build an object file
-pmtest.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmtest.dir/build.make CMakeFiles/pmtest.dir/pmtest.o
-.PHONY : pmtest.o
+pmhello.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmhello.dir/build.make CMakeFiles/pmhello.dir/pmhello.o
+.PHONY : pmhello.o
 
 # target to preprocess a source file
-pmtest.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmtest.dir/build.make CMakeFiles/pmtest.dir/pmtest.i
-.PHONY : pmtest.i
+pmhello.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmhello.dir/build.make CMakeFiles/pmhello.dir/pmhello.i
+.PHONY : pmhello.i
 
 # target to generate assembly for a file
-pmtest.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmtest.dir/build.make CMakeFiles/pmtest.dir/pmtest.s
-.PHONY : pmtest.s
+pmhello.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/pmhello.dir/build.make CMakeFiles/pmhello.dir/pmhello.s
+.PHONY : pmhello.s
 
 # Help Target
 help:
@@ -193,14 +193,14 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... pmemobjtest"
-	@echo "... pmtest"
-	@echo "... pmemobjtest.o"
-	@echo "... pmemobjtest.i"
-	@echo "... pmemobjtest.s"
-	@echo "... pmtest.o"
-	@echo "... pmtest.i"
-	@echo "... pmtest.s"
+	@echo "... pmemlibtest"
+	@echo "... pmhello"
+	@echo "... pmemlibtest.o"
+	@echo "... pmemlibtest.i"
+	@echo "... pmemlibtest.s"
+	@echo "... pmhello.o"
+	@echo "... pmhello.i"
+	@echo "... pmhello.s"
 .PHONY : help
 
 

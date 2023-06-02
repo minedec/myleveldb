@@ -1,15 +1,13 @@
 project(pmtest)
 
 link_directories("/usr/local/lib")
-
-add_executable(pmtest "")
-target_sources(pmtest
+add_executable(pmhello "")
+target_sources(pmhello
   PRIVATE
-    "pmtest.cpp"
-    "pmtest.h"
+    "pmhello.cpp"
+    "pmhello.h"
 )
+target_link_libraries(pmhello pmemobj)
 
-target_link_libraries(pmtest pmemobj)
-
-add_executable(pmemobjtest pmemobjtest.cpp)
-target_link_libraries(pmemobjtest pmem)
+add_executable(pmlibtest pmlibtest.cpp)
+target_link_libraries(pmlibtest pmem)
