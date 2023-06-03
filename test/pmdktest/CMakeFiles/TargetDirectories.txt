@@ -1,4 +1,0 @@
-/home/jjd/myleveldb/test/pmdktest/CMakeFiles/rebuild_cache.dir
-/home/jjd/myleveldb/test/pmdktest/CMakeFiles/edit_cache.dir
-/home/jjd/myleveldb/test/pmdktest/CMakeFiles/pmemlibtest.dir
-/home/jjd/myleveldb/test/pmdktest/CMakeFiles/pmhello.dir

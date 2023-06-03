@@ -1,4 +1,4 @@
-#include "pmtest.h"
+#include "pmhello.h"
 #include <error.h>
 
 inline bool file_exists(const std::string & name) {

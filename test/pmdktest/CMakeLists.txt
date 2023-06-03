@@ -1,5 +1,5 @@
 project(pmtest)
-
+set(CMAKE_BUILD_TYPE "Debug")
 link_directories("/usr/local/lib")
 add_executable(pmhello "")
 target_sources(pmhello

@@ -357,6 +357,18 @@ class PosixWritableFile final : public WritableFile {
     return SyncFd(fd_, filename_);
   }
 
+  int getFd() override {
+    return fd_;
+  }
+
+  std::string getFileName() override {
+    return filename_;
+  }
+
+  std::string getDirName() override {
+    return dirname_;
+  }
+
  private:
   Status FlushBuffer() {
     Status status = WriteUnbuffered(buf_, pos_);
@@ -456,16 +468,19 @@ class PosixWritableFile final : public WritableFile {
                  filename.length() - separator_pos - 1);
   }
 
+public:
   // True if the given file is a manifest file.
   static bool IsManifest(const std::string& filename) {
     return Basename(filename).starts_with("MANIFEST");
   }
 
+private:
   // buf_[0, pos_ - 1] contains data to be written to fd_.
   char buf_[kWritableFileBufferSize];
   size_t pos_;
   int fd_;
 
+public:
   const bool is_manifest_;  // True if the file's name starts with MANIFEST.
   const std::string filename_;
   const std::string dirname_;  // The directory of filename_.
@@ -579,8 +594,9 @@ class PosixEnv : public Env {
 
   Status NewWritableFile(const std::string& filename,
                          WritableFile** result) override {
+    // PMDB change O_WRONLY to O_RDWR for mmap
     int fd = ::open(filename.c_str(),
-                    O_TRUNC | O_WRONLY | O_CREAT | kOpenBaseFlags, 0644);
+                    O_TRUNC | O_RDWR | O_CREAT | kOpenBaseFlags, 0644);
     if (fd < 0) {
       *result = nullptr;
       return PosixError(filename, errno);

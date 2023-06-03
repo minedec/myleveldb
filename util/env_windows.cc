@@ -325,6 +325,18 @@ class WindowsWritableFile : public WritableFile {
     return Status::OK();
   }
 
+  // int getFd() override { 
+  //   return fd_;
+  // }
+
+  std::string getFileName() override {
+    return filename_;
+  }
+
+  // std::string getDirName() override {
+  //   return dirname_;
+  // }
+
  private:
   Status FlushBuffer() {
     Status status = WriteUnbuffered(buf_, pos_);

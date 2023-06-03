@@ -1,1 +1,0 @@
-/usr/bin/c++ -rdynamic CMakeFiles/pmemobjtest.dir/pmemobjtest.o -o pmemobjtest   -L/usr/local/lib  -Wl,-rpath,/usr/local/lib -lpmem 

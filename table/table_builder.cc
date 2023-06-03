@@ -17,6 +17,8 @@
 #include "util/crc32c.h"
 
 #include "db/db_impl.h"
+#include "util/env_posix.cc"
+#include <libpmem.h>
 
 namespace leveldb {
 
@@ -35,6 +37,7 @@ struct TableBuilder::Rep {
                          : new FilterBlockBuilder(opt.filter_policy)),
         pending_index_entry(false) {
     index_block_options.block_restart_interval = 1;
+    builder_buf.resize(MAX_LEN);
   }
 
   Options options;
@@ -65,6 +68,11 @@ struct TableBuilder::Rep {
 
   // PMDB temporaily store insert key, when finish block, add block handle encoding
   std::vector<ParsedInternalKey> tmp_keys;
+
+  // PMDB add char array to append table content
+  std::vector<char> builder_buf;
+  uint64_t MAX_LEN = 1024 * 1024 * 4;
+  uint64_t buf_pos = 0;
 };
 
 TableBuilder::TableBuilder(const Options& options, WritableFile* file)
@@ -177,7 +185,11 @@ void TableBuilder::Flush() {
     r->tmp_keys.clear();
 
     r->pending_index_entry = true;
-    r->status = r->file->Flush();
+
+    // PMDB if is manifest, do regular way
+    if(PosixWritableFile::IsManifest(r->file->getFileName())) {
+      r->status = r->file->Flush();
+    }
   }
   if (r->filter_block != nullptr) {
     r->filter_block->StartBlock(r->offset);
@@ -240,14 +252,36 @@ void TableBuilder::WriteRawBlock(const Slice& block_contents,
   Rep* r = rep_;
   handle->set_offset(r->offset);
   handle->set_size(block_contents.size());
-  r->status = r->file->Append(block_contents);
+  
+  // PMDB if is manifest, do regular way
+  if(PosixWritableFile::IsManifest(r->file->getFileName())) {
+    r->status = r->file->Append(block_contents);
+  } else {
+    // PMDB append block_contents to buf
+    const char* data = block_contents.data();
+    size_t size = block_contents.size();
+    memcpy(&r->builder_buf[0] + r->buf_pos, data, size);
+    r->status = Status::OK();
+    r->buf_pos += size;
+  }
+
   if (r->status.ok()) {
     char trailer[kBlockTrailerSize];
     trailer[0] = type;
     uint32_t crc = crc32c::Value(block_contents.data(), block_contents.size());
     crc = crc32c::Extend(crc, trailer, 1);  // Extend crc to cover block type
     EncodeFixed32(trailer + 1, crc32c::Mask(crc));
-    r->status = r->file->Append(Slice(trailer, kBlockTrailerSize));
+    
+    // PMDB if is manifest, do regular way
+    if(PosixWritableFile::IsManifest(r->file->getFileName())) {
+      r->status = r->file->Append(Slice(trailer, kBlockTrailerSize));
+    } else {
+      // PMDB append trailer to buf
+      memcpy(&r->builder_buf[0] + r->buf_pos, trailer, kBlockTrailerSize);
+      r->status = Status::OK();
+      r->buf_pos += kBlockTrailerSize;
+    }
+
     if (r->status.ok()) {
       r->offset += block_contents.size() + kBlockTrailerSize;
     }
@@ -305,11 +339,32 @@ Status TableBuilder::Finish() {
     footer.set_index_handle(index_block_handle);
     std::string footer_encoding;
     footer.EncodeTo(&footer_encoding);
-    r->status = r->file->Append(footer_encoding);
+    
+    // PMDB if is manifest, do regular way
+    if(PosixWritableFile::IsManifest(r->file->getFileName())) {
+      r->status = r->file->Append(footer_encoding);
+    } else {
+      //PMDB append footer
+      const char* data = footer_encoding.data();
+      size_t size = footer_encoding.size();
+      memcpy(&r->builder_buf[0] + r->buf_pos, data, size);
+      r->status = Status::OK();
+      r->buf_pos += size;
+    }
+
     if (r->status.ok()) {
       r->offset += footer_encoding.size();
     }
   }
+
+  // PMDB use mmap to flush data to PM and truncate file size
+  if(!PosixWritableFile::IsManifest(r->file->getFileName())) {
+    assert(r->buf_pos == r->offset);
+    ftruncate(r->file->getFd(), r->offset);
+    char* faddr = (char*)mmap(NULL, r->MAX_LEN, PROT_READ | PROT_WRITE, MAP_SHARED, r->file->getFd(), 0);
+    memcpy(faddr, &r->builder_buf[0], r->buf_pos);
+  }
+
   return r->status;
 }
 
