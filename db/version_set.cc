@@ -754,7 +754,9 @@ VersionSet::~VersionSet() {
   current_->Unref();
   assert(dummy_versions_.next_ == &dummy_versions_);  // List must be empty
   delete descriptor_log_;
-  delete descriptor_file_;
+  if(descriptor_file_ != nullptr) {
+    delete descriptor_file_;
+  }
 }
 
 void VersionSet::AppendVersion(Version* v) {
@@ -806,9 +808,13 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
     // first call to LogAndApply (when opening the database).
     assert(descriptor_file_ == nullptr);
     new_manifest_file = DescriptorFileName(dbname_, manifest_file_number_);
-    s = env_->NewWritableFile(new_manifest_file, &descriptor_file_);
+
+    // PMDB use mmap descriptor file
+    // s = env_->NewWritableFile(new_manifest_file, &descriptor_file_);
+    s = Status::OK();
     if (s.ok()) {
       descriptor_log_ = new log::Writer(descriptor_file_);
+      descriptor_log_->setFileName(new_manifest_file);
       s = WriteSnapshot(descriptor_log_);
     }
   }
@@ -823,7 +829,7 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
       edit->EncodeTo(&record);
       s = descriptor_log_->AddRecord(record);
       if (s.ok()) {
-        s = descriptor_file_->Sync();
+        // s = descriptor_file_->Sync();
       }
       if (!s.ok()) {
         Log(options_->info_log, "MANIFEST write: %s\n", s.ToString().c_str());
@@ -848,7 +854,9 @@ Status VersionSet::LogAndApply(VersionEdit* edit, port::Mutex* mu) {
     delete v;
     if (!new_manifest_file.empty()) {
       delete descriptor_log_;
-      delete descriptor_file_;
+      if(descriptor_file_ != nullptr) {
+        delete descriptor_file_;
+      }
       descriptor_log_ = nullptr;
       descriptor_file_ = nullptr;
       env_->RemoveFile(new_manifest_file);
@@ -1009,7 +1017,10 @@ bool VersionSet::ReuseManifest(const std::string& dscname,
 
   assert(descriptor_file_ == nullptr);
   assert(descriptor_log_ == nullptr);
-  Status r = env_->NewAppendableFile(dscname, &descriptor_file_);
+
+  // PMDB
+  // Status r = env_->NewAppendableFile(dscname, &descriptor_file_);
+  Status r = Status::OK();
   if (!r.ok()) {
     Log(options_->info_log, "Reuse MANIFEST: %s\n", r.ToString().c_str());
     assert(descriptor_file_ == nullptr);
@@ -1018,6 +1029,9 @@ bool VersionSet::ReuseManifest(const std::string& dscname,
 
   Log(options_->info_log, "Reusing MANIFEST %s\n", dscname.c_str());
   descriptor_log_ = new log::Writer(descriptor_file_, manifest_size);
+  descriptor_log_->setFileName(dscname);
+  descriptor_log_->loffset_ = manifest_size;
+  descriptor_log_->lpersist_offset_ = manifest_size;
   manifest_file_number_ = manifest_number;
   return true;
 }

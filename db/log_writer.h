@@ -36,6 +36,10 @@ class Writer {
 
   Status AddRecord(const Slice& slice);
 
+  void setFileName(std::string filename);
+
+  void Close();
+
  private:
   Status EmitPhysicalRecord(RecordType type, const char* ptr, size_t length);
 
@@ -46,6 +50,16 @@ class Writer {
   // pre-computed to reduce the overhead of computing the crc of the
   // record type stored in the header.
   uint32_t type_crc_[kMaxRecordType + 1];
+
+public:
+  // PMDB use mmap to append log file
+  char* laddr = nullptr;
+  size_t loffset_ = 0;
+  size_t lpersist_offset_ = 0;
+  size_t MAX_LEN = 1024 * 1024 * 4;
+  std::string filename_;
+  int is_pmem = 0;
+  size_t mapped_len = 0;
 };
 
 }  // namespace log

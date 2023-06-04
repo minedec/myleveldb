@@ -10,7 +10,7 @@ int main(){
     leveldb::Options options;
     options.create_if_missing = true;
     std::string path(getcwd(NULL, 0));
-    path += "/../dbtest";
+    path += "/dbtest";
     leveldb::Status status = leveldb::DB::Open(options,path, &db);
     assert(status.ok());
     std::cout << "db path:" << path << std::endl;

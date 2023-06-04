@@ -1,0 +1,2829 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="774" onload="init(evt)" viewBox="0 0 1200 774" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="774.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="757" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="757" > </text>
+<g id="frames">
+<g >
+<title>pmem_persist (29,333,326 samples, 7.19%)</title><rect x="573.0" y="405" width="84.8" height="15.0" fill="rgb(254,123,46)" rx="2" ry="2" />
+<text  x="576.01" y="415.5" >pmem_pers..</text>
+</g>
+<g >
+<title>ext4_ext_tree_init (1,333,333 samples, 0.33%)</title><rect x="33.1" y="421" width="3.9" height="15.0" fill="rgb(207,117,33)" rx="2" ry="2" />
+<text  x="36.14" y="431.5" ></text>
+</g>
+<g >
+<title>__ext4_journal_stop (1,333,333 samples, 0.33%)</title><rect x="326.2" y="501" width="3.9" height="15.0" fill="rgb(215,75,30)" rx="2" ry="2" />
+<text  x="329.21" y="511.5" ></text>
+</g>
+<g >
+<title>dax_get_by_host (1,333,333 samples, 0.33%)</title><rect x="557.6" y="101" width="3.8" height="15.0" fill="rgb(249,204,32)" rx="2" ry="2" />
+<text  x="560.58" y="111.5" ></text>
+</g>
+<g >
+<title>leveldb::Status::OK (1,333,333 samples, 0.33%)</title><rect x="977.9" y="389" width="3.9" height="15.0" fill="rgb(219,27,17)" rx="2" ry="2" />
+<text  x="980.91" y="399.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_find_node (1,333,333 samples, 0.33%)</title><rect x="503.6" y="341" width="3.9" height="15.0" fill="rgb(213,163,20)" rx="2" ry="2" />
+<text  x="506.59" y="351.5" ></text>
+</g>
+<g >
+<title>__filemap_fdatawrite_range (1,333,333 samples, 0.33%)</title><rect x="557.6" y="165" width="3.8" height="15.0" fill="rgb(211,1,44)" rx="2" ry="2" />
+<text  x="560.58" y="175.5" ></text>
+</g>
+<g >
+<title>__libc_start_main (5,333,332 samples, 1.31%)</title><rect x="29.3" y="677" width="15.4" height="15.0" fill="rgb(234,33,25)" rx="2" ry="2" />
+<text  x="32.28" y="687.5" ></text>
+</g>
+<g >
+<title>std::make_shared&lt;std::__future_base::_State_baseV2&gt; (10,666,664 samples, 2.61%)</title><rect x="1074.3" y="469" width="30.9" height="15.0" fill="rgb(209,177,37)" rx="2" ry="2" />
+<text  x="1077.31" y="479.5" >st..</text>
+</g>
+<g >
+<title>do_syscall_64 (1,333,333 samples, 0.33%)</title><rect x="33.1" y="533" width="3.9" height="15.0" fill="rgb(243,166,20)" rx="2" ry="2" />
+<text  x="36.14" y="543.5" ></text>
+</g>
+<g >
+<title>leveldb::SkipList&lt;char const*, leveldb::MemTable::KeyComparator&gt;::KeyIsAfterNode (57,333,319 samples, 14.05%)</title><rect x="769.7" y="373" width="165.8" height="15.0" fill="rgb(205,64,51)" rx="2" ry="2" />
+<text  x="772.67" y="383.5" >leveldb::SkipList&lt;cha..</text>
+</g>
+<g >
+<title>__kernel_write (15,999,996 samples, 3.92%)</title><rect x="611.6" y="213" width="46.2" height="15.0" fill="rgb(220,127,2)" rx="2" ry="2" />
+<text  x="614.57" y="223.5" >__ke..</text>
+</g>
+<g >
+<title>vsnprintf (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="501" width="3.9" height="15.0" fill="rgb(206,65,21)" rx="2" ry="2" />
+<text  x="1181.43" y="511.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (9,333,331 samples, 2.29%)</title><rect x="1074.3" y="405" width="27.0" height="15.0" fill="rgb(225,160,49)" rx="2" ry="2" />
+<text  x="1077.31" y="415.5" >s..</text>
+</g>
+<g >
+<title>vprintk_default (1,333,333 samples, 0.33%)</title><rect x="573.0" y="229" width="3.9" height="15.0" fill="rgb(219,47,53)" rx="2" ry="2" />
+<text  x="576.01" y="239.5" ></text>
+</g>
+<g >
+<title>__memcmp_avx2_movbe (6,666,665 samples, 1.63%)</title><rect x="885.4" y="309" width="19.2" height="15.0" fill="rgb(244,14,40)" rx="2" ry="2" />
+<text  x="888.36" y="319.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt;, std::allocator&lt;std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt; &gt; &gt;::resize (1,333,333 samples, 0.33%)</title><rect x="40.8" y="581" width="3.9" height="15.0" fill="rgb(206,101,33)" rx="2" ry="2" />
+<text  x="43.85" y="591.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock (1,333,333 samples, 0.33%)</title><rect x="669.4" y="197" width="3.9" height="15.0" fill="rgb(208,224,45)" rx="2" ry="2" />
+<text  x="672.41" y="207.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;std::__future_base::_State_baseV2,  (1,333,333 samples, 0.33%)</title><rect x="1070.5" y="421" width="3.8" height="15.0" fill="rgb(228,159,52)" rx="2" ry="2" />
+<text  x="1073.46" y="431.5" ></text>
+</g>
+<g >
+<title>leveldb::InternalKeyComparator::Compare (1,333,333 samples, 0.33%)</title><rect x="480.5" y="405" width="3.8" height="15.0" fill="rgb(215,203,1)" rx="2" ry="2" />
+<text  x="483.46" y="415.5" ></text>
+</g>
+<g >
+<title>map_id_up (1,333,333 samples, 0.33%)</title><rect x="380.2" y="453" width="3.9" height="15.0" fill="rgb(252,37,6)" rx="2" ry="2" />
+<text  x="383.20" y="463.5" ></text>
+</g>
+<g >
+<title>leveldb::crc32c::(anonymous namespace)::ReadUint32LE (1,333,333 samples, 0.33%)</title><rect x="534.4" y="341" width="3.9" height="15.0" fill="rgb(221,227,3)" rx="2" ry="2" />
+<text  x="537.44" y="351.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access (1,333,333 samples, 0.33%)</title><rect x="1058.9" y="389" width="3.8" height="15.0" fill="rgb(229,55,11)" rx="2" ry="2" />
+<text  x="1061.89" y="399.5" ></text>
+</g>
+<g >
+<title>format_decode (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="485" width="3.9" height="15.0" fill="rgb(210,178,13)" rx="2" ry="2" />
+<text  x="1181.43" y="495.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Hash_code_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::__detail::_Select1st, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, true&gt;::_M_hash_code (1,333,333 samples, 0.33%)</title><rect x="526.7" y="341" width="3.9" height="15.0" fill="rgb(240,93,18)" rx="2" ry="2" />
+<text  x="529.73" y="351.5" ></text>
+</g>
+<g >
+<title>irq_exit (1,333,333 samples, 0.33%)</title><rect x="418.8" y="485" width="3.8" height="15.0" fill="rgb(239,82,35)" rx="2" ry="2" />
+<text  x="421.76" y="495.5" ></text>
+</g>
+<g >
+<title>do_writepages (1,333,333 samples, 0.33%)</title><rect x="557.6" y="149" width="3.8" height="15.0" fill="rgb(212,173,15)" rx="2" ry="2" />
+<text  x="560.58" y="159.5" ></text>
+</g>
+<g >
+<title>from_kprojid (1,333,333 samples, 0.33%)</title><rect x="380.2" y="469" width="3.9" height="15.0" fill="rgb(252,150,50)" rx="2" ry="2" />
+<text  x="383.20" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::Options::Options (1,333,333 samples, 0.33%)</title><rect x="40.8" y="645" width="3.9" height="15.0" fill="rgb(247,97,50)" rx="2" ry="2" />
+<text  x="43.85" y="655.5" ></text>
+</g>
+<g >
+<title>path_openat (2,666,666 samples, 0.65%)</title><rect x="21.6" y="581" width="7.7" height="15.0" fill="rgb(247,46,12)" rx="2" ry="2" />
+<text  x="24.57" y="591.5" ></text>
+</g>
+<g >
+<title>leveldb::crc32c::Value (5,333,332 samples, 1.31%)</title><rect x="534.4" y="357" width="15.5" height="15.0" fill="rgb(208,110,52)" rx="2" ry="2" />
+<text  x="537.44" y="367.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;std::__future_base::_State_baseV2&gt;::shared_ptr (1,333,333 samples, 0.33%)</title><rect x="1070.5" y="437" width="3.8" height="15.0" fill="rgb(234,75,8)" rx="2" ry="2" />
+<text  x="1073.46" y="447.5" ></text>
+</g>
+<g >
+<title>file_write_and_wait_range (1,333,333 samples, 0.33%)</title><rect x="557.6" y="181" width="3.8" height="15.0" fill="rgb(230,42,2)" rx="2" ry="2" />
+<text  x="560.58" y="191.5" ></text>
+</g>
+<g >
+<title>__pthread_mutex_lock (1,333,333 samples, 0.33%)</title><rect x="1024.2" y="437" width="3.8" height="15.0" fill="rgb(221,143,9)" rx="2" ry="2" />
+<text  x="1027.18" y="447.5" ></text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;std::__future_base::_Result_base, std::__future_base::_Result_base::_Deleter&gt;::_M_ptr (1,333,333 samples, 0.33%)</title><rect x="1109.0" y="325" width="3.9" height="15.0" fill="rgb(221,176,22)" rx="2" ry="2" />
+<text  x="1112.02" y="335.5" ></text>
+</g>
+<g >
+<title>seq_printf (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="533" width="3.9" height="15.0" fill="rgb(241,38,24)" rx="2" ry="2" />
+<text  x="1181.43" y="543.5" ></text>
+</g>
+<g >
+<title>leveldb::BlockBuilder::Add (5,333,332 samples, 1.31%)</title><rect x="465.0" y="405" width="15.5" height="15.0" fill="rgb(249,178,22)" rx="2" ry="2" />
+<text  x="468.03" y="415.5" ></text>
+</g>
+<g >
+<title>page_fault (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="661" width="3.8" height="15.0" fill="rgb(252,152,28)" rx="2" ry="2" />
+<text  x="1142.87" y="671.5" ></text>
+</g>
+<g >
+<title>leveldb::WriteBatchInternal::Count (1,333,333 samples, 0.33%)</title><rect x="1128.3" y="485" width="3.9" height="15.0" fill="rgb(228,84,44)" rx="2" ry="2" />
+<text  x="1131.30" y="495.5" ></text>
+</g>
+<g >
+<title>std::__fill_n_a&lt;unsigned long, char&gt; (5,333,332 samples, 1.31%)</title><rect x="657.8" y="293" width="15.5" height="15.0" fill="rgb(222,195,22)" rx="2" ry="2" />
+<text  x="660.84" y="303.5" ></text>
+</g>
+<g >
+<title>handle_mm_fault (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="629" width="3.9" height="15.0" fill="rgb(210,30,15)" rx="2" ry="2" />
+<text  x="1189.14" y="639.5" ></text>
+</g>
+<g >
+<title>leveldb::MemTable::KeyComparator::operator (42,666,656 samples, 10.46%)</title><rect x="812.1" y="357" width="123.4" height="15.0" fill="rgb(250,183,50)" rx="2" ry="2" />
+<text  x="815.09" y="367.5" >leveldb::MemTab..</text>
+</g>
+<g >
+<title>std::__future_base::_State_baseV2::_State_baseV2 (3,999,999 samples, 0.98%)</title><rect x="1089.7" y="341" width="11.6" height="15.0" fill="rgb(221,72,23)" rx="2" ry="2" />
+<text  x="1092.74" y="351.5" ></text>
+</g>
+<g >
+<title>seq_read (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="565" width="3.9" height="15.0" fill="rgb(234,182,32)" rx="2" ry="2" />
+<text  x="1181.43" y="575.5" ></text>
+</g>
+<g >
+<title>alloc_pages_current (2,666,666 samples, 0.65%)</title><rect x="627.0" y="165" width="7.7" height="15.0" fill="rgb(230,146,38)" rx="2" ry="2" />
+<text  x="629.99" y="175.5" ></text>
+</g>
+<g >
+<title>ext4_ext_map_blocks (2,666,666 samples, 0.65%)</title><rect x="330.1" y="485" width="7.7" height="15.0" fill="rgb(220,142,44)" rx="2" ry="2" />
+<text  x="333.07" y="495.5" ></text>
+</g>
+<g >
+<title>__x64_sys_unlink (1,333,333 samples, 0.33%)</title><rect x="29.3" y="565" width="3.8" height="15.0" fill="rgb(245,20,22)" rx="2" ry="2" />
+<text  x="32.28" y="575.5" ></text>
+</g>
+<g >
+<title>pmem_memcpy (5,333,332 samples, 1.31%)</title><rect x="557.6" y="405" width="15.4" height="15.0" fill="rgb(251,53,17)" rx="2" ry="2" />
+<text  x="560.58" y="415.5" ></text>
+</g>
+<g >
+<title>lru_cache_add_active_or_unevictable (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="597" width="3.9" height="15.0" fill="rgb(239,19,9)" rx="2" ry="2" />
+<text  x="1189.14" y="607.5" ></text>
+</g>
+<g >
+<title>__find_get_block (1,333,333 samples, 0.33%)</title><rect x="33.1" y="341" width="3.9" height="15.0" fill="rgb(252,28,32)" rx="2" ry="2" />
+<text  x="36.14" y="351.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::ToString[abi:cxx11] (1,333,333 samples, 0.33%)</title><rect x="519.0" y="373" width="3.9" height="15.0" fill="rgb(213,207,9)" rx="2" ry="2" />
+<text  x="522.02" y="383.5" ></text>
+</g>
+<g >
+<title>std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt;::queue&lt;std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt;, void&gt; (1,333,333 samples, 0.33%)</title><rect x="40.8" y="485" width="3.9" height="15.0" fill="rgb(247,77,28)" rx="2" ry="2" />
+<text  x="43.85" y="495.5" ></text>
+</g>
+<g >
+<title>invalidate_inode_pages2_range (1,333,333 samples, 0.33%)</title><rect x="318.5" y="501" width="3.9" height="15.0" fill="rgb(253,189,10)" rx="2" ry="2" />
+<text  x="321.50" y="511.5" ></text>
+</g>
+<g >
+<title>cpuinfo_open (2,666,666 samples, 0.65%)</title><rect x="21.6" y="517" width="7.7" height="15.0" fill="rgb(253,157,49)" rx="2" ry="2" />
+<text  x="24.57" y="527.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (1,333,333 samples, 0.33%)</title><rect x="418.8" y="389" width="3.8" height="15.0" fill="rgb(239,147,39)" rx="2" ry="2" />
+<text  x="421.76" y="399.5" ></text>
+</g>
+<g >
+<title>leveldb::WriteBatchInternal::InsertInto (71,999,982 samples, 17.65%)</title><rect x="742.7" y="469" width="208.2" height="15.0" fill="rgb(205,111,11)" rx="2" ry="2" />
+<text  x="745.68" y="479.5" >leveldb::WriteBatchInternal..</text>
+</g>
+<g >
+<title>leveldb::VersionSet::NumLevelFiles (1,333,333 samples, 0.33%)</title><rect x="731.1" y="453" width="3.9" height="15.0" fill="rgb(251,13,20)" rx="2" ry="2" />
+<text  x="734.11" y="463.5" ></text>
+</g>
+<g >
+<title>std::fill_n&lt;char*, unsigned long, char&gt; (5,333,332 samples, 1.31%)</title><rect x="657.8" y="309" width="15.5" height="15.0" fill="rgb(252,219,6)" rx="2" ry="2" />
+<text  x="660.84" y="319.5" ></text>
+</g>
+<g >
+<title>do_signal (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="645" width="7.7" height="15.0" fill="rgb(227,80,4)" rx="2" ry="2" />
+<text  x="1173.72" y="655.5" ></text>
+</g>
+<g >
+<title>leveldb::ExtractUserKey (1,333,333 samples, 0.33%)</title><rect x="480.5" y="389" width="3.8" height="15.0" fill="rgb(230,151,29)" rx="2" ry="2" />
+<text  x="483.46" y="399.5" ></text>
+</g>
+<g >
+<title>std::move&lt;char const*&amp;&gt; (1,333,333 samples, 0.33%)</title><rect x="950.9" y="421" width="3.9" height="15.0" fill="rgb(228,200,21)" rx="2" ry="2" />
+<text  x="953.92" y="431.5" ></text>
+</g>
+<g >
+<title>leveldb::crc32c::Extend (11,999,997 samples, 2.94%)</title><rect x="989.5" y="437" width="34.7" height="15.0" fill="rgb(241,69,8)" rx="2" ry="2" />
+<text  x="992.48" y="447.5" >le..</text>
+</g>
+<g >
+<title>std::_Sp_counted_ptr_inplace&lt;std::__future_base::_State_baseV2, std::allocator&lt;std::__future_base::_State_baseV2&gt;,  (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="405" width="7.7" height="15.0" fill="rgb(206,214,34)" rx="2" ry="2" />
+<text  x="1108.16" y="415.5" ></text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;std::__future_base::_State_baseV2&gt; &gt;::construct&lt;std::__future_base::_State_baseV2&gt; (5,333,332 samples, 1.31%)</title><rect x="1085.9" y="373" width="15.4" height="15.0" fill="rgb(245,151,31)" rx="2" ry="2" />
+<text  x="1088.88" y="383.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="629" width="3.9" height="15.0" fill="rgb(236,102,18)" rx="2" ry="2" />
+<text  x="1166.01" y="639.5" ></text>
+</g>
+<g >
+<title>dax_iomap_actor (90,666,644 samples, 22.22%)</title><rect x="60.1" y="517" width="262.3" height="15.0" fill="rgb(224,119,47)" rx="2" ry="2" />
+<text  x="63.13" y="527.5" >dax_iomap_actor</text>
+</g>
+<g >
+<title>leveldb::Benchmark::RunBenchmark (1,333,333 samples, 0.33%)</title><rect x="37.0" y="629" width="3.8" height="15.0" fill="rgb(216,112,38)" rx="2" ry="2" />
+<text  x="39.99" y="639.5" ></text>
+</g>
+<g >
+<title>ext4_issue_zeroout (1,333,333 samples, 0.33%)</title><rect x="337.8" y="485" width="3.8" height="15.0" fill="rgb(254,58,33)" rx="2" ry="2" />
+<text  x="340.78" y="495.5" ></text>
+</g>
+<g >
+<title>do_dentry_open (2,666,666 samples, 0.65%)</title><rect x="21.6" y="549" width="7.7" height="15.0" fill="rgb(209,179,53)" rx="2" ry="2" />
+<text  x="24.57" y="559.5" ></text>
+</g>
+<g >
+<title>ext4_inode_csum.isra.59 (2,666,666 samples, 0.65%)</title><rect x="372.5" y="453" width="7.7" height="15.0" fill="rgb(249,124,40)" rx="2" ry="2" />
+<text  x="375.48" y="463.5" ></text>
+</g>
+<g >
+<title>ext4_read_block_bitmap (1,333,333 samples, 0.33%)</title><rect x="333.9" y="437" width="3.9" height="15.0" fill="rgb(228,157,40)" rx="2" ry="2" />
+<text  x="336.92" y="447.5" ></text>
+</g>
+<g >
+<title>ext4_iomap_end (17,333,329 samples, 4.25%)</title><rect x="341.6" y="517" width="50.2" height="15.0" fill="rgb(232,211,14)" rx="2" ry="2" />
+<text  x="344.63" y="527.5" >ext4_..</text>
+</g>
+<g >
+<title>leveldb::Benchmark::Run (2,666,666 samples, 0.65%)</title><rect x="33.1" y="645" width="7.7" height="15.0" fill="rgb(236,46,10)" rx="2" ry="2" />
+<text  x="36.14" y="655.5" ></text>
+</g>
+<g >
+<title>do_futex (2,666,666 samples, 0.65%)</title><rect x="399.5" y="613" width="7.7" height="15.0" fill="rgb(237,4,37)" rx="2" ry="2" />
+<text  x="402.48" y="623.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1,333,333 samples, 0.33%)</title><rect x="33.1" y="549" width="3.9" height="15.0" fill="rgb(234,167,33)" rx="2" ry="2" />
+<text  x="36.14" y="559.5" ></text>
+</g>
+<g >
+<title>free_pages_and_swap_cache (1,333,333 samples, 0.33%)</title><rect x="1170.7" y="501" width="3.9" height="15.0" fill="rgb(228,97,53)" rx="2" ry="2" />
+<text  x="1173.72" y="511.5" ></text>
+</g>
+<g >
+<title>do_page_fault (1,333,333 samples, 0.33%)</title><rect x="1151.4" y="661" width="3.9" height="15.0" fill="rgb(212,27,0)" rx="2" ry="2" />
+<text  x="1154.44" y="671.5" ></text>
+</g>
+<g >
+<title>std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt;::deque (1,333,333 samples, 0.33%)</title><rect x="40.8" y="469" width="3.9" height="15.0" fill="rgb(251,133,16)" rx="2" ry="2" />
+<text  x="43.85" y="479.5" ></text>
+</g>
+<g >
+<title>std::__basic_future&lt;leveldb::Status&gt;::_Reset::~_Reset (2,666,666 samples, 0.65%)</title><rect x="1062.7" y="469" width="7.8" height="15.0" fill="rgb(220,157,10)" rx="2" ry="2" />
+<text  x="1065.75" y="479.5" ></text>
+</g>
+<g >
+<title>write_pmem (1,333,333 samples, 0.33%)</title><rect x="337.8" y="373" width="3.8" height="15.0" fill="rgb(205,227,50)" rx="2" ry="2" />
+<text  x="340.78" y="383.5" ></text>
+</g>
+<g >
+<title>jbd2_journal_dirty_metadata (2,666,666 samples, 0.65%)</title><rect x="364.8" y="453" width="7.7" height="15.0" fill="rgb(213,151,50)" rx="2" ry="2" />
+<text  x="367.77" y="463.5" ></text>
+</g>
+<g >
+<title>printk (1,333,333 samples, 0.33%)</title><rect x="573.0" y="261" width="3.9" height="15.0" fill="rgb(252,224,8)" rx="2" ry="2" />
+<text  x="576.01" y="271.5" ></text>
+</g>
+<g >
+<title>memcpy_flushcache (1,333,333 samples, 0.33%)</title><rect x="337.8" y="357" width="3.8" height="15.0" fill="rgb(231,44,36)" rx="2" ry="2" />
+<text  x="340.78" y="367.5" ></text>
+</g>
+<g >
+<title>release_pages (1,333,333 samples, 0.33%)</title><rect x="1170.7" y="485" width="3.9" height="15.0" fill="rgb(212,124,20)" rx="2" ry="2" />
+<text  x="1173.72" y="495.5" ></text>
+</g>
+<g >
+<title>dax_writeback_mapping_range (1,333,333 samples, 0.33%)</title><rect x="557.6" y="117" width="3.8" height="15.0" fill="rgb(225,5,46)" rx="2" ry="2" />
+<text  x="560.58" y="127.5" ></text>
+</g>
+<g >
+<title>vfs_read (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="613" width="3.9" height="15.0" fill="rgb(244,33,44)" rx="2" ry="2" />
+<text  x="1181.43" y="623.5" ></text>
+</g>
+<g >
+<title>__srcu_read_unlock (86,666,645 samples, 21.24%)</title><rect x="67.8" y="485" width="250.7" height="15.0" fill="rgb(242,4,23)" rx="2" ry="2" />
+<text  x="70.84" y="495.5" >__srcu_read_unlock</text>
+</g>
+<g >
+<title>__check_object_size (1,333,333 samples, 0.33%)</title><rect x="60.1" y="469" width="3.9" height="15.0" fill="rgb(215,109,3)" rx="2" ry="2" />
+<text  x="63.13" y="479.5" ></text>
+</g>
+<g >
+<title>ext4_group_desc_csum_set (1,333,333 samples, 0.33%)</title><rect x="330.1" y="437" width="3.8" height="15.0" fill="rgb(246,40,5)" rx="2" ry="2" />
+<text  x="333.07" y="447.5" ></text>
+</g>
+<g >
+<title>__ext4_new_inode (1,333,333 samples, 0.33%)</title><rect x="33.1" y="437" width="3.9" height="15.0" fill="rgb(225,111,0)" rx="2" ry="2" />
+<text  x="36.14" y="447.5" ></text>
+</g>
+<g >
+<title>leveldb::crc32c::(anonymous namespace)::ReadUint32LE (7,999,998 samples, 1.96%)</title><rect x="1001.0" y="421" width="23.2" height="15.0" fill="rgb(235,20,18)" rx="2" ry="2" />
+<text  x="1004.05" y="431.5" >l..</text>
+</g>
+<g >
+<title>ext4_orphan_del (2,666,666 samples, 0.65%)</title><rect x="384.1" y="501" width="7.7" height="15.0" fill="rgb(225,162,37)" rx="2" ry="2" />
+<text  x="387.05" y="511.5" ></text>
+</g>
+<g >
+<title>jbd2__journal_start (3,999,999 samples, 0.98%)</title><rect x="345.5" y="485" width="11.6" height="15.0" fill="rgb(231,27,48)" rx="2" ry="2" />
+<text  x="348.49" y="495.5" ></text>
+</g>
+<g >
+<title>std::allocator&lt;std::__future_base::_State_baseV2&gt;::~allocator (1,333,333 samples, 0.33%)</title><rect x="1101.3" y="453" width="3.9" height="15.0" fill="rgb(210,60,39)" rx="2" ry="2" />
+<text  x="1104.31" y="463.5" ></text>
+</g>
+<g >
+<title>ext4_mark_iloc_dirty (7,999,998 samples, 1.96%)</title><rect x="360.9" y="485" width="23.2" height="15.0" fill="rgb(235,176,8)" rx="2" ry="2" />
+<text  x="363.92" y="495.5" >e..</text>
+</g>
+<g >
+<title>std::__basic_future&lt;leveldb::Status&gt;::__basic_future (1,333,333 samples, 0.33%)</title><rect x="1070.5" y="453" width="3.8" height="15.0" fill="rgb(237,6,42)" rx="2" ry="2" />
+<text  x="1073.46" y="463.5" ></text>
+</g>
+<g >
+<title>ext4_mb_mark_diskspace_used (2,666,666 samples, 0.65%)</title><rect x="330.1" y="453" width="7.7" height="15.0" fill="rgb(249,102,41)" rx="2" ry="2" />
+<text  x="333.07" y="463.5" ></text>
+</g>
+<g >
+<title>__alloc_fd (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="565" width="3.9" height="15.0" fill="rgb(229,163,42)" rx="2" ry="2" />
+<text  x="1166.01" y="575.5" ></text>
+</g>
+<g >
+<title>__vfs_write (15,999,996 samples, 3.92%)</title><rect x="611.6" y="197" width="46.2" height="15.0" fill="rgb(247,36,52)" rx="2" ry="2" />
+<text  x="614.57" y="207.5" >__vf..</text>
+</g>
+<g >
+<title>ext4_iomap_begin (1,333,333 samples, 0.33%)</title><rect x="569.2" y="213" width="3.8" height="15.0" fill="rgb(216,105,40)" rx="2" ry="2" />
+<text  x="572.15" y="223.5" ></text>
+</g>
+<g >
+<title>truncate_inode_pages_final (1,333,333 samples, 0.33%)</title><rect x="29.3" y="485" width="3.8" height="15.0" fill="rgb(216,140,35)" rx="2" ry="2" />
+<text  x="32.28" y="495.5" ></text>
+</g>
+<g >
+<title>leveldb::DecodeFixed32 (1,333,333 samples, 0.33%)</title><rect x="546.0" y="309" width="3.9" height="15.0" fill="rgb(213,198,12)" rx="2" ry="2" />
+<text  x="549.01" y="319.5" ></text>
+</g>
+<g >
+<title>__wake_up (1,333,333 samples, 0.33%)</title><rect x="357.1" y="469" width="3.8" height="15.0" fill="rgb(238,105,0)" rx="2" ry="2" />
+<text  x="360.06" y="479.5" ></text>
+</g>
+<g >
+<title>do_lookup_x (1,333,333 samples, 0.33%)</title><rect x="1166.9" y="693" width="3.8" height="15.0" fill="rgb(225,17,52)" rx="2" ry="2" />
+<text  x="1169.86" y="703.5" ></text>
+</g>
+<g >
+<title>dax_copy_from_iter (2,666,666 samples, 0.65%)</title><rect x="60.1" y="501" width="7.7" height="15.0" fill="rgb(232,40,50)" rx="2" ry="2" />
+<text  x="63.13" y="511.5" ></text>
+</g>
+<g >
+<title>apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="1143.7" y="677" width="3.9" height="15.0" fill="rgb(244,205,50)" rx="2" ry="2" />
+<text  x="1146.73" y="687.5" ></text>
+</g>
+<g >
+<title>run_rebalance_domains (1,333,333 samples, 0.33%)</title><rect x="52.4" y="517" width="3.9" height="15.0" fill="rgb(228,172,21)" rx="2" ry="2" />
+<text  x="55.42" y="527.5" ></text>
+</g>
+<g >
+<title>crc32c_pcl_intel_update (1,333,333 samples, 0.33%)</title><rect x="376.3" y="421" width="3.9" height="15.0" fill="rgb(237,191,52)" rx="2" ry="2" />
+<text  x="379.34" y="431.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;std::__future_base::_State_baseV2&gt;::~shared_ptr (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="469" width="7.7" height="15.0" fill="rgb(206,128,22)" rx="2" ry="2" />
+<text  x="1108.16" y="479.5" ></text>
+</g>
+<g >
+<title>main (5,333,332 samples, 1.31%)</title><rect x="29.3" y="661" width="15.4" height="15.0" fill="rgb(248,216,46)" rx="2" ry="2" />
+<text  x="32.28" y="671.5" ></text>
+</g>
+<g >
+<title>do_page_fault (1,333,333 samples, 0.33%)</title><rect x="573.0" y="341" width="3.9" height="15.0" fill="rgb(232,125,46)" rx="2" ry="2" />
+<text  x="576.01" y="351.5" ></text>
+</g>
+<g >
+<title>open_path (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="677" width="3.9" height="15.0" fill="rgb(240,49,50)" rx="2" ry="2" />
+<text  x="1166.01" y="687.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::new_allocator&lt;std::__future_base::_State_baseV2&gt;::construct&lt;std::__future_base::_State_baseV2&gt; (5,333,332 samples, 1.31%)</title><rect x="1085.9" y="357" width="15.4" height="15.0" fill="rgb(212,223,20)" rx="2" ry="2" />
+<text  x="1088.88" y="367.5" ></text>
+</g>
+<g >
+<title>handle_mm_fault (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="613" width="3.8" height="15.0" fill="rgb(207,193,10)" rx="2" ry="2" />
+<text  x="1142.87" y="623.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (1,333,333 samples, 0.33%)</title><rect x="530.6" y="373" width="3.8" height="15.0" fill="rgb(220,87,9)" rx="2" ry="2" />
+<text  x="533.59" y="383.5" ></text>
+</g>
+<g >
+<title>ext4_mark_inode_dirty (1,333,333 samples, 0.33%)</title><rect x="33.1" y="405" width="3.9" height="15.0" fill="rgb(233,7,40)" rx="2" ry="2" />
+<text  x="36.14" y="415.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;leveldb::ParsedInternalKey, std::allocator&lt;leveldb::ParsedInternalKey&gt; &gt;::push_back (1,333,333 samples, 0.33%)</title><rect x="553.7" y="405" width="3.9" height="15.0" fill="rgb(225,3,21)" rx="2" ry="2" />
+<text  x="556.73" y="415.5" ></text>
+</g>
+<g >
+<title>ext4_inode_csum_set (1,333,333 samples, 0.33%)</title><rect x="387.9" y="469" width="3.9" height="15.0" fill="rgb(242,120,28)" rx="2" ry="2" />
+<text  x="390.91" y="479.5" ></text>
+</g>
+<g >
+<title>__do_softirq (1,333,333 samples, 0.33%)</title><rect x="29.3" y="357" width="3.8" height="15.0" fill="rgb(244,194,40)" rx="2" ry="2" />
+<text  x="32.28" y="367.5" ></text>
+</g>
+<g >
+<title>__do_page_fault (5,333,332 samples, 1.31%)</title><rect x="557.6" y="325" width="15.4" height="15.0" fill="rgb(229,165,34)" rx="2" ry="2" />
+<text  x="560.58" y="335.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Hashtable_alloc&lt;std::allocator&lt;std::__detail::_Hash_node&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, true&gt; &gt; &gt;::_M_allocate_node&lt;std::piecewise_construct_t const&amp;, std::tuple&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;&amp;&amp;&gt;, std::tuple&lt;&gt; &gt; (1,333,333 samples, 0.33%)</title><rect x="515.2" y="341" width="3.8" height="15.0" fill="rgb(217,154,5)" rx="2" ry="2" />
+<text  x="518.16" y="351.5" ></text>
+</g>
+<g >
+<title>leveldb::SkipList&lt;char const*, leveldb::MemTable::KeyComparator&gt;::Node::Next (1,333,333 samples, 0.33%)</title><rect x="935.5" y="373" width="3.8" height="15.0" fill="rgb(236,64,27)" rx="2" ry="2" />
+<text  x="938.49" y="383.5" ></text>
+</g>
+<g >
+<title>std::_Deque_base&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt;::_Deque_base (1,333,333 samples, 0.33%)</title><rect x="40.8" y="453" width="3.9" height="15.0" fill="rgb(218,33,30)" rx="2" ry="2" />
+<text  x="43.85" y="463.5" ></text>
+</g>
+<g >
+<title>proc_reg_read (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="581" width="3.9" height="15.0" fill="rgb(220,77,16)" rx="2" ry="2" />
+<text  x="1181.43" y="591.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="693" width="7.7" height="15.0" fill="rgb(211,7,20)" rx="2" ry="2" />
+<text  x="1173.72" y="703.5" ></text>
+</g>
+<g >
+<title>leveldb::BuildTable (75,999,981 samples, 18.63%)</title><rect x="453.5" y="437" width="219.8" height="15.0" fill="rgb(243,210,41)" rx="2" ry="2" />
+<text  x="456.46" y="447.5" >leveldb::BuildTable</text>
+</g>
+<g >
+<title>std::_Function_base::~_Function_base (1,333,333 samples, 0.33%)</title><rect x="1058.9" y="437" width="3.8" height="15.0" fill="rgb(229,181,14)" rx="2" ry="2" />
+<text  x="1061.89" y="447.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Prime_rehash_policy::_M_state (1,333,333 samples, 0.33%)</title><rect x="511.3" y="325" width="3.9" height="15.0" fill="rgb(250,135,1)" rx="2" ry="2" />
+<text  x="514.31" y="335.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::WriteWrapper (118,666,637 samples, 29.08%)</title><rect x="719.5" y="485" width="343.2" height="15.0" fill="rgb(206,168,11)" rx="2" ry="2" />
+<text  x="722.54" y="495.5" >leveldb::DBImpl::WriteWrapper</text>
+</g>
+<g >
+<title>do_coredump (27,999,993 samples, 6.86%)</title><rect x="576.9" y="277" width="80.9" height="15.0" fill="rgb(224,26,40)" rx="2" ry="2" />
+<text  x="579.86" y="287.5" >do_coredump</text>
+</g>
+<g >
+<title>std::__future_base::_State_baseV2::~_State_baseV2 (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="357" width="7.7" height="15.0" fill="rgb(229,159,17)" rx="2" ry="2" />
+<text  x="1108.16" y="367.5" ></text>
+</g>
+<g >
+<title>std::deque&lt;leveldb::DBImpl::Writer*, std::allocator&lt;leveldb::DBImpl::Writer*&gt; &gt;::empty (1,333,333 samples, 0.33%)</title><rect x="1031.9" y="469" width="3.9" height="15.0" fill="rgb(253,121,24)" rx="2" ry="2" />
+<text  x="1034.90" y="479.5" ></text>
+</g>
+<g >
+<title>mmput (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="581" width="7.7" height="15.0" fill="rgb(250,128,11)" rx="2" ry="2" />
+<text  x="1173.72" y="591.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::ToString[abi:cxx11] (1,333,333 samples, 0.33%)</title><rect x="499.7" y="373" width="3.9" height="15.0" fill="rgb(250,89,35)" rx="2" ry="2" />
+<text  x="502.74" y="383.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::BytewiseComparatorImpl::Compare (7,999,998 samples, 1.96%)</title><rect x="885.4" y="325" width="23.1" height="15.0" fill="rgb(235,210,2)" rx="2" ry="2" />
+<text  x="888.36" y="335.5" >l..</text>
+</g>
+<g >
+<title>std::__invoke&lt;void  (234,666,608 samples, 57.52%)</title><rect x="453.5" y="581" width="678.7" height="15.0" fill="rgb(233,166,6)" rx="2" ry="2" />
+<text  x="456.46" y="591.5" >std::__invoke&lt;void </text>
+</g>
+<g >
+<title>mutex_unlock (2,666,666 samples, 0.65%)</title><rect x="580.7" y="197" width="7.7" height="15.0" fill="rgb(237,71,4)" rx="2" ry="2" />
+<text  x="583.72" y="207.5" ></text>
+</g>
+<g >
+<title>leveldb::ExtractUserKey (5,333,332 samples, 1.31%)</title><rect x="908.5" y="325" width="15.4" height="15.0" fill="rgb(237,64,32)" rx="2" ry="2" />
+<text  x="911.50" y="335.5" ></text>
+</g>
+<g >
+<title>std::call_once&lt;void  (9,333,331 samples, 2.29%)</title><rect x="407.2" y="645" width="27.0" height="15.0" fill="rgb(248,190,54)" rx="2" ry="2" />
+<text  x="410.19" y="655.5" >s..</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="677" width="3.9" height="15.0" fill="rgb(254,10,47)" rx="2" ry="2" />
+<text  x="1181.43" y="687.5" ></text>
+</g>
+<g >
+<title>leveldb::DestroyDB (1,333,333 samples, 0.33%)</title><rect x="29.3" y="629" width="3.8" height="15.0" fill="rgb(208,226,45)" rx="2" ry="2" />
+<text  x="32.28" y="639.5" ></text>
+</g>
+<g >
+<title>submit_bio (1,333,333 samples, 0.33%)</title><rect x="337.8" y="437" width="3.8" height="15.0" fill="rgb(224,11,47)" rx="2" ry="2" />
+<text  x="340.78" y="447.5" ></text>
+</g>
+<g >
+<title>ext4_issue_zeroout (1,333,333 samples, 0.33%)</title><rect x="569.2" y="181" width="3.8" height="15.0" fill="rgb(240,218,32)" rx="2" ry="2" />
+<text  x="572.15" y="191.5" ></text>
+</g>
+<g >
+<title>ext4_mb_new_blocks (2,666,666 samples, 0.65%)</title><rect x="330.1" y="469" width="7.7" height="15.0" fill="rgb(241,108,29)" rx="2" ry="2" />
+<text  x="333.07" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::WriteBatch::Put (3,999,999 samples, 0.98%)</title><rect x="1120.6" y="501" width="11.6" height="15.0" fill="rgb(228,93,21)" rx="2" ry="2" />
+<text  x="1123.59" y="511.5" ></text>
+</g>
+<g >
+<title>__do_softirq (1,333,333 samples, 0.33%)</title><rect x="418.8" y="469" width="3.8" height="15.0" fill="rgb(239,180,22)" rx="2" ry="2" />
+<text  x="421.76" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::PosixEnv::StartThread (1,333,333 samples, 0.33%)</title><rect x="37.0" y="613" width="3.8" height="15.0" fill="rgb(254,29,31)" rx="2" ry="2" />
+<text  x="39.99" y="623.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::PosixWritableFile::WriteUnbuffered (3,999,999 samples, 0.98%)</title><rect x="974.1" y="405" width="11.5" height="15.0" fill="rgb(236,165,39)" rx="2" ry="2" />
+<text  x="977.05" y="415.5" ></text>
+</g>
+<g >
+<title>vfprintf (1,333,333 samples, 0.33%)</title><rect x="17.7" y="661" width="3.9" height="15.0" fill="rgb(238,136,15)" rx="2" ry="2" />
+<text  x="20.71" y="671.5" ></text>
+</g>
+<g >
+<title>leveldb::Status::operator= (1,333,333 samples, 0.33%)</title><rect x="1116.7" y="501" width="3.9" height="15.0" fill="rgb(222,94,3)" rx="2" ry="2" />
+<text  x="1119.73" y="511.5" ></text>
+</g>
+<g >
+<title>std::_Hash_impl::hash (1,333,333 samples, 0.33%)</title><rect x="526.7" y="309" width="3.9" height="15.0" fill="rgb(221,74,3)" rx="2" ry="2" />
+<text  x="529.73" y="319.5" ></text>
+</g>
+<g >
+<title>iput (1,333,333 samples, 0.33%)</title><rect x="29.3" y="533" width="3.8" height="15.0" fill="rgb(238,128,46)" rx="2" ry="2" />
+<text  x="32.28" y="543.5" ></text>
+</g>
+<g >
+<title>pmem_make_request (1,333,333 samples, 0.33%)</title><rect x="337.8" y="405" width="3.8" height="15.0" fill="rgb(208,191,0)" rx="2" ry="2" />
+<text  x="340.78" y="415.5" ></text>
+</g>
+<g >
+<title>__vfs_write (114,666,638 samples, 28.10%)</title><rect x="60.1" y="581" width="331.7" height="15.0" fill="rgb(237,77,51)" rx="2" ry="2" />
+<text  x="63.13" y="591.5" >__vfs_write</text>
+</g>
+<g >
+<title>leveldb::Slice::Slice (1,333,333 samples, 0.33%)</title><rect x="873.8" y="325" width="3.8" height="15.0" fill="rgb(219,86,45)" rx="2" ry="2" />
+<text  x="876.79" y="335.5" ></text>
+</g>
+<g >
+<title>dax_iomap_fault (1,333,333 samples, 0.33%)</title><rect x="569.2" y="229" width="3.8" height="15.0" fill="rgb(241,37,2)" rx="2" ry="2" />
+<text  x="572.15" y="239.5" ></text>
+</g>
+<g >
+<title>rcu_process_callbacks (1,333,333 samples, 0.33%)</title><rect x="418.8" y="453" width="3.8" height="15.0" fill="rgb(220,89,36)" rx="2" ry="2" />
+<text  x="421.76" y="463.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1,333,333 samples, 0.33%)</title><rect x="37.0" y="565" width="3.8" height="15.0" fill="rgb(239,194,37)" rx="2" ry="2" />
+<text  x="39.99" y="575.5" ></text>
+</g>
+<g >
+<title>open64 (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="661" width="3.9" height="15.0" fill="rgb(220,173,5)" rx="2" ry="2" />
+<text  x="1166.01" y="671.5" ></text>
+</g>
+<g >
+<title>leveldb::Status::operator= (1,333,333 samples, 0.33%)</title><rect x="950.9" y="453" width="3.9" height="15.0" fill="rgb(250,185,8)" rx="2" ry="2" />
+<text  x="953.92" y="463.5" ></text>
+</g>
+<g >
+<title>apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="418.8" y="517" width="3.8" height="15.0" fill="rgb(211,26,46)" rx="2" ry="2" />
+<text  x="421.76" y="527.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::Write (137,333,299 samples, 33.66%)</title><rect x="715.7" y="501" width="397.2" height="15.0" fill="rgb(233,11,7)" rx="2" ry="2" />
+<text  x="718.69" y="511.5" >leveldb::DBImpl::Write</text>
+</g>
+<g >
+<title>leveldb::Slice::Slice (1,333,333 samples, 0.33%)</title><rect x="480.5" y="373" width="3.8" height="15.0" fill="rgb(244,126,11)" rx="2" ry="2" />
+<text  x="483.46" y="383.5" ></text>
+</g>
+<g >
+<title>pmem_do_bvec (1,333,333 samples, 0.33%)</title><rect x="337.8" y="389" width="3.8" height="15.0" fill="rgb(209,123,31)" rx="2" ry="2" />
+<text  x="340.78" y="399.5" ></text>
+</g>
+<g >
+<title>unmap_single_vma (1,333,333 samples, 0.33%)</title><rect x="1174.6" y="533" width="3.8" height="15.0" fill="rgb(209,138,39)" rx="2" ry="2" />
+<text  x="1177.58" y="543.5" ></text>
+</g>
+<g >
+<title>crypto_shash_update (1,333,333 samples, 0.33%)</title><rect x="330.1" y="405" width="3.8" height="15.0" fill="rgb(207,74,36)" rx="2" ry="2" />
+<text  x="333.07" y="415.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="661" width="3.9" height="15.0" fill="rgb(205,20,2)" rx="2" ry="2" />
+<text  x="1181.43" y="671.5" ></text>
+</g>
+<g >
+<title>__do_page_fault (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="645" width="3.9" height="15.0" fill="rgb(229,126,38)" rx="2" ry="2" />
+<text  x="1189.14" y="655.5" ></text>
+</g>
+<g >
+<title>std::promise&lt;leveldb::Status&gt;::~promise (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="485" width="7.7" height="15.0" fill="rgb(241,20,20)" rx="2" ry="2" />
+<text  x="1108.16" y="495.5" ></text>
+</g>
+<g >
+<title>leveldb::Random::Uniform (2,666,666 samples, 0.65%)</title><rect x="677.1" y="469" width="7.7" height="15.0" fill="rgb(216,142,49)" rx="2" ry="2" />
+<text  x="680.12" y="479.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt;, std::allocator&lt;std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt; &gt; &gt;::_M_default_append (1,333,333 samples, 0.33%)</title><rect x="40.8" y="565" width="3.9" height="15.0" fill="rgb(215,194,50)" rx="2" ry="2" />
+<text  x="43.85" y="575.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::BackgroundCompaction (75,999,981 samples, 18.63%)</title><rect x="453.5" y="485" width="219.8" height="15.0" fill="rgb(215,46,36)" rx="2" ry="2" />
+<text  x="456.46" y="495.5" >leveldb::DBImpl::BackgroundCo..</text>
+</g>
+<g >
+<title>leveldb::DBImpl::Recover (1,333,333 samples, 0.33%)</title><rect x="33.1" y="597" width="3.9" height="15.0" fill="rgb(247,212,22)" rx="2" ry="2" />
+<text  x="36.14" y="607.5" ></text>
+</g>
+<g >
+<title>std::__future_base::_Result_base::_Deleter::operator (1,333,333 samples, 0.33%)</title><rect x="1105.2" y="325" width="3.8" height="15.0" fill="rgb(237,106,51)" rx="2" ry="2" />
+<text  x="1108.16" y="335.5" ></text>
+</g>
+<g >
+<title>memcpy_erms (2,666,666 samples, 0.65%)</title><rect x="634.7" y="149" width="7.7" height="15.0" fill="rgb(225,34,48)" rx="2" ry="2" />
+<text  x="637.71" y="159.5" ></text>
+</g>
+<g >
+<title>std::deque&lt;leveldb::DBImpl::Writer*, std::allocator&lt;leveldb::DBImpl::Writer*&gt; &gt;::emplace_back&lt;leveldb::DBImpl::Writer*&gt; (1,333,333 samples, 0.33%)</title><rect x="1039.6" y="453" width="3.9" height="15.0" fill="rgb(248,134,11)" rx="2" ry="2" />
+<text  x="1042.61" y="463.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;std::__future_base::_Result&lt;leveldb::Status&gt;, std::__future_base::_Result_base::_Deleter&gt;::unique_ptr (3,999,999 samples, 0.98%)</title><rect x="422.6" y="517" width="11.6" height="15.0" fill="rgb(254,182,38)" rx="2" ry="2" />
+<text  x="425.61" y="527.5" ></text>
+</g>
+<g >
+<title>do_page_fault (5,333,332 samples, 1.31%)</title><rect x="557.6" y="341" width="15.4" height="15.0" fill="rgb(231,202,47)" rx="2" ry="2" />
+<text  x="560.58" y="351.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.29] (234,666,608 samples, 57.52%)</title><rect x="453.5" y="645" width="678.7" height="15.0" fill="rgb(209,191,21)" rx="2" ry="2" />
+<text  x="456.46" y="655.5" >[libstdc++.so.6.0.29]</text>
+</g>
+<g >
+<title>get_signal (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="629" width="7.7" height="15.0" fill="rgb(211,4,28)" rx="2" ry="2" />
+<text  x="1173.72" y="639.5" ></text>
+</g>
+<g >
+<title>exit_mmap (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="565" width="7.7" height="15.0" fill="rgb(247,172,29)" rx="2" ry="2" />
+<text  x="1173.72" y="575.5" ></text>
+</g>
+<g >
+<title>ext4_reserve_inode_write (1,333,333 samples, 0.33%)</title><rect x="33.1" y="389" width="3.9" height="15.0" fill="rgb(244,81,11)" rx="2" ry="2" />
+<text  x="36.14" y="399.5" ></text>
+</g>
+<g >
+<title>ext4_iomap_begin (6,666,665 samples, 1.63%)</title><rect x="322.4" y="517" width="19.2" height="15.0" fill="rgb(224,7,48)" rx="2" ry="2" />
+<text  x="325.35" y="527.5" ></text>
+</g>
+<g >
+<title>__ext4_journal_start_sb (1,333,333 samples, 0.33%)</title><rect x="322.4" y="501" width="3.8" height="15.0" fill="rgb(244,206,30)" rx="2" ry="2" />
+<text  x="325.35" y="511.5" ></text>
+</g>
+<g >
+<title>mutex_spin_on_owner (2,666,666 samples, 0.65%)</title><rect x="603.9" y="133" width="7.7" height="15.0" fill="rgb(247,105,46)" rx="2" ry="2" />
+<text  x="606.86" y="143.5" ></text>
+</g>
+<g >
+<title>complete (1,333,333 samples, 0.33%)</title><rect x="569.2" y="53" width="3.8" height="15.0" fill="rgb(238,104,42)" rx="2" ry="2" />
+<text  x="572.15" y="63.5" ></text>
+</g>
+<g >
+<title>apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="29.3" y="405" width="3.8" height="15.0" fill="rgb(230,125,14)" rx="2" ry="2" />
+<text  x="32.28" y="415.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::operator[] (2,666,666 samples, 0.65%)</title><rect x="472.7" y="389" width="7.8" height="15.0" fill="rgb(218,170,26)" rx="2" ry="2" />
+<text  x="475.75" y="399.5" ></text>
+</g>
+<g >
+<title>__x64_sys_openat (1,333,333 samples, 0.33%)</title><rect x="33.1" y="517" width="3.9" height="15.0" fill="rgb(234,197,38)" rx="2" ry="2" />
+<text  x="36.14" y="527.5" ></text>
+</g>
+<g >
+<title>leveldb::InternalKeyComparator::Compare (19,999,995 samples, 4.90%)</title><rect x="877.6" y="341" width="57.9" height="15.0" fill="rgb(248,143,26)" rx="2" ry="2" />
+<text  x="880.65" y="351.5" >leveld..</text>
+</g>
+<g >
+<title>get_signal (27,999,993 samples, 6.86%)</title><rect x="576.9" y="293" width="80.9" height="15.0" fill="rgb(243,147,39)" rx="2" ry="2" />
+<text  x="579.86" y="303.5" >get_signal</text>
+</g>
+<g >
+<title>std::unique_ptr&lt;std::__future_base::_Result_base, std::__future_base::_Result_base::_Deleter&gt;::~unique_ptr (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="341" width="7.7" height="15.0" fill="rgb(213,194,24)" rx="2" ry="2" />
+<text  x="1108.16" y="351.5" ></text>
+</g>
+<g >
+<title>rcu_process_callbacks (1,333,333 samples, 0.33%)</title><rect x="869.9" y="245" width="3.9" height="15.0" fill="rgb(216,117,11)" rx="2" ry="2" />
+<text  x="872.93" y="255.5" ></text>
+</g>
+<g >
+<title>leveldb::TableBuilder::TableBuilder (5,333,332 samples, 1.31%)</title><rect x="657.8" y="421" width="15.5" height="15.0" fill="rgb(233,26,35)" rx="2" ry="2" />
+<text  x="660.84" y="431.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::PosixWritableFile::FlushBuffer (3,999,999 samples, 0.98%)</title><rect x="974.1" y="421" width="11.5" height="15.0" fill="rgb(214,7,0)" rx="2" ry="2" />
+<text  x="977.05" y="431.5" ></text>
+</g>
+<g >
+<title>seq_vprintf (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="517" width="3.9" height="15.0" fill="rgb(209,151,50)" rx="2" ry="2" />
+<text  x="1181.43" y="527.5" ></text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;1ul, std::__future_base::_Result_base::_Deleter&gt;::_Tuple_impl&lt;std::__future_base::_Result_base::_Deleter&gt; (1,333,333 samples, 0.33%)</title><rect x="426.5" y="453" width="3.8" height="15.0" fill="rgb(237,158,40)" rx="2" ry="2" />
+<text  x="429.47" y="463.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::operator[] (1,333,333 samples, 0.33%)</title><rect x="1028.0" y="469" width="3.9" height="15.0" fill="rgb(250,131,54)" rx="2" ry="2" />
+<text  x="1031.04" y="479.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::new_allocator&lt;std::__future_base::_State_baseV2&gt;::destroy&lt;std::__future_base::_State_baseV2&gt; (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="373" width="7.7" height="15.0" fill="rgb(254,210,43)" rx="2" ry="2" />
+<text  x="1108.16" y="383.5" ></text>
+</g>
+<g >
+<title>dump_skip (15,999,996 samples, 3.92%)</title><rect x="611.6" y="245" width="46.2" height="15.0" fill="rgb(244,150,53)" rx="2" ry="2" />
+<text  x="614.57" y="255.5" >dump..</text>
+</g>
+<g >
+<title>run_timer_softirq (1,333,333 samples, 0.33%)</title><rect x="29.3" y="341" width="3.8" height="15.0" fill="rgb(245,46,33)" rx="2" ry="2" />
+<text  x="32.28" y="351.5" ></text>
+</g>
+<g >
+<title>__kernel_write (11,999,997 samples, 2.94%)</title><rect x="576.9" y="229" width="34.7" height="15.0" fill="rgb(251,93,34)" rx="2" ry="2" />
+<text  x="579.86" y="239.5" >__..</text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (1,333,333 samples, 0.33%)</title><rect x="623.1" y="149" width="3.9" height="15.0" fill="rgb(221,63,7)" rx="2" ry="2" />
+<text  x="626.14" y="159.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (2,666,666 samples, 0.65%)</title><rect x="399.5" y="661" width="7.7" height="15.0" fill="rgb(217,52,14)" rx="2" ry="2" />
+<text  x="402.48" y="671.5" ></text>
+</g>
+<g >
+<title>rcu_gp_kthread_wake (1,333,333 samples, 0.33%)</title><rect x="418.8" y="421" width="3.8" height="15.0" fill="rgb(251,220,44)" rx="2" ry="2" />
+<text  x="421.76" y="431.5" ></text>
+</g>
+<g >
+<title>std::deque&lt;leveldb::DBImpl::Writer*, std::allocator&lt;leveldb::DBImpl::Writer*&gt; &gt;::_M_push_back_aux&lt;leveldb::DBImpl::Writer*&gt; (1,333,333 samples, 0.33%)</title><rect x="1039.6" y="437" width="3.9" height="15.0" fill="rgb(226,122,10)" rx="2" ry="2" />
+<text  x="1042.61" y="447.5" ></text>
+</g>
+<g >
+<title>leveldb::TableBuilder::WriteRawBlock (5,333,332 samples, 1.31%)</title><rect x="534.4" y="373" width="15.5" height="15.0" fill="rgb(251,119,19)" rx="2" ry="2" />
+<text  x="537.44" y="383.5" ></text>
+</g>
+<g >
+<title>__do_page_fault (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="629" width="3.8" height="15.0" fill="rgb(233,36,8)" rx="2" ry="2" />
+<text  x="1142.87" y="639.5" ></text>
+</g>
+<g >
+<title>db_bench (407,999,898 samples, 100.00%)</title><rect x="10.0" y="709" width="1180.0" height="15.0" fill="rgb(211,19,51)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" >db_bench</text>
+</g>
+<g >
+<title>std::_Function_base::_Base_manager&lt;std::__future_base::_State_baseV2::_Setter&lt;leveldb::Status, leveldb::Status const&amp;&gt; &gt;::_M_init_functor (1,333,333 samples, 0.33%)</title><rect x="1055.0" y="437" width="3.9" height="15.0" fill="rgb(206,27,42)" rx="2" ry="2" />
+<text  x="1058.03" y="447.5" ></text>
+</g>
+<g >
+<title>jbd2_journal_stop (1,333,333 samples, 0.33%)</title><rect x="357.1" y="485" width="3.8" height="15.0" fill="rgb(243,62,2)" rx="2" ry="2" />
+<text  x="360.06" y="495.5" ></text>
+</g>
+<g >
+<title>__mutex_lock_slowpath (3,999,999 samples, 0.98%)</title><rect x="646.3" y="149" width="11.5" height="15.0" fill="rgb(206,136,31)" rx="2" ry="2" />
+<text  x="649.27" y="159.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (119,999,970 samples, 29.41%)</title><rect x="48.6" y="645" width="347.0" height="15.0" fill="rgb(221,108,24)" rx="2" ry="2" />
+<text  x="51.56" y="655.5" >do_syscall_64</text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_bucket_index (1,333,333 samples, 0.33%)</title><rect x="522.9" y="341" width="3.8" height="15.0" fill="rgb(237,51,33)" rx="2" ry="2" />
+<text  x="525.88" y="351.5" ></text>
+</g>
+<g >
+<title>__do_softirq (1,333,333 samples, 0.33%)</title><rect x="1143.7" y="629" width="3.9" height="15.0" fill="rgb(232,84,37)" rx="2" ry="2" />
+<text  x="1146.73" y="639.5" ></text>
+</g>
+<g >
+<title>exit_to_usermode_loop (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="661" width="7.7" height="15.0" fill="rgb(219,156,19)" rx="2" ry="2" />
+<text  x="1173.72" y="671.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::size (2,666,666 samples, 0.65%)</title><rect x="916.2" y="309" width="7.7" height="15.0" fill="rgb(252,141,3)" rx="2" ry="2" />
+<text  x="919.21" y="319.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1,333,333 samples, 0.33%)</title><rect x="29.3" y="597" width="3.8" height="15.0" fill="rgb(222,91,53)" rx="2" ry="2" />
+<text  x="32.28" y="607.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::PosixWritableFile::Flush (5,333,332 samples, 1.31%)</title><rect x="970.2" y="437" width="15.4" height="15.0" fill="rgb(232,72,23)" rx="2" ry="2" />
+<text  x="973.20" y="447.5" ></text>
+</g>
+<g >
+<title>std::thread::_Invoker&lt;std::tuple&lt;void  (234,666,608 samples, 57.52%)</title><rect x="453.5" y="613" width="678.7" height="15.0" fill="rgb(211,100,20)" rx="2" ry="2" />
+<text  x="456.46" y="623.5" >std::thread::_Invoker&lt;std::tuple&lt;void </text>
+</g>
+<g >
+<title>do_syscall_64 (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="677" width="7.7" height="15.0" fill="rgb(253,10,1)" rx="2" ry="2" />
+<text  x="1173.72" y="687.5" ></text>
+</g>
+<g >
+<title>handle_mm_fault (1,333,333 samples, 0.33%)</title><rect x="1182.3" y="629" width="3.8" height="15.0" fill="rgb(217,50,18)" rx="2" ry="2" />
+<text  x="1185.29" y="639.5" ></text>
+</g>
+<g >
+<title>__alloc_pages_nodemask (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="565" width="3.8" height="15.0" fill="rgb(234,128,48)" rx="2" ry="2" />
+<text  x="1142.87" y="575.5" ></text>
+</g>
+<g >
+<title>leveldb::crc32c::(anonymous namespace)::ReadUint32LE (1,333,333 samples, 0.33%)</title><rect x="985.6" y="437" width="3.9" height="15.0" fill="rgb(227,134,35)" rx="2" ry="2" />
+<text  x="988.62" y="447.5" ></text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;std::__future_base::_Result&lt;leveldb::Status&gt;, std::__future_base::_Result_base::_Deleter&gt;::_M_ptr (1,333,333 samples, 0.33%)</title><rect x="430.3" y="469" width="3.9" height="15.0" fill="rgb(221,58,29)" rx="2" ry="2" />
+<text  x="433.33" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::Status::Status (1,333,333 samples, 0.33%)</title><rect x="977.9" y="373" width="3.9" height="15.0" fill="rgb(224,108,4)" rx="2" ry="2" />
+<text  x="980.91" y="383.5" ></text>
+</g>
+<g >
+<title>memcpy_erms (1,333,333 samples, 0.33%)</title><rect x="37.0" y="485" width="3.8" height="15.0" fill="rgb(233,57,7)" rx="2" ry="2" />
+<text  x="39.99" y="495.5" ></text>
+</g>
+<g >
+<title>generic_make_request (1,333,333 samples, 0.33%)</title><rect x="337.8" y="421" width="3.8" height="15.0" fill="rgb(251,51,39)" rx="2" ry="2" />
+<text  x="340.78" y="431.5" ></text>
+</g>
+<g >
+<title>page_fault (3,999,999 samples, 0.98%)</title><rect x="661.7" y="261" width="11.6" height="15.0" fill="rgb(218,226,37)" rx="2" ry="2" />
+<text  x="664.70" y="271.5" ></text>
+</g>
+<g >
+<title>__wake_up (2,666,666 samples, 0.65%)</title><rect x="561.4" y="149" width="7.8" height="15.0" fill="rgb(232,125,49)" rx="2" ry="2" />
+<text  x="564.44" y="159.5" ></text>
+</g>
+<g >
+<title>leveldb::Benchmark::Benchmark (1,333,333 samples, 0.33%)</title><rect x="29.3" y="645" width="3.8" height="15.0" fill="rgb(238,197,6)" rx="2" ry="2" />
+<text  x="32.28" y="655.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (1,333,333 samples, 0.33%)</title><rect x="357.1" y="437" width="3.8" height="15.0" fill="rgb(228,168,8)" rx="2" ry="2" />
+<text  x="360.06" y="447.5" ></text>
+</g>
+<g >
+<title>__handle_mm_fault (5,333,332 samples, 1.31%)</title><rect x="557.6" y="293" width="15.4" height="15.0" fill="rgb(210,215,15)" rx="2" ry="2" />
+<text  x="560.58" y="303.5" ></text>
+</g>
+<g >
+<title>std::thread::_M_start_thread (1,333,333 samples, 0.33%)</title><rect x="37.0" y="597" width="3.8" height="15.0" fill="rgb(227,88,30)" rx="2" ry="2" />
+<text  x="39.99" y="607.5" ></text>
+</g>
+<g >
+<title>do_group_exit (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="613" width="7.7" height="15.0" fill="rgb(216,185,10)" rx="2" ry="2" />
+<text  x="1173.72" y="623.5" ></text>
+</g>
+<g >
+<title>evict (1,333,333 samples, 0.33%)</title><rect x="29.3" y="517" width="3.8" height="15.0" fill="rgb(211,54,37)" rx="2" ry="2" />
+<text  x="32.28" y="527.5" ></text>
+</g>
+<g >
+<title>__x64_sys_futex (2,666,666 samples, 0.65%)</title><rect x="399.5" y="629" width="7.7" height="15.0" fill="rgb(221,26,32)" rx="2" ry="2" />
+<text  x="402.48" y="639.5" ></text>
+</g>
+<g >
+<title>dax_iomap_rw (114,666,638 samples, 28.10%)</title><rect x="60.1" y="549" width="331.7" height="15.0" fill="rgb(240,5,18)" rx="2" ry="2" />
+<text  x="63.13" y="559.5" >dax_iomap_rw</text>
+</g>
+<g >
+<title>__copy_user_flushcache (1,333,333 samples, 0.33%)</title><rect x="64.0" y="453" width="3.8" height="15.0" fill="rgb(240,25,46)" rx="2" ry="2" />
+<text  x="66.99" y="463.5" ></text>
+</g>
+<g >
+<title>rcu_gp_kthread_wake (1,333,333 samples, 0.33%)</title><rect x="869.9" y="213" width="3.9" height="15.0" fill="rgb(239,113,30)" rx="2" ry="2" />
+<text  x="872.93" y="223.5" ></text>
+</g>
+<g >
+<title>__handle_mm_fault (1,333,333 samples, 0.33%)</title><rect x="1182.3" y="613" width="3.8" height="15.0" fill="rgb(214,50,37)" rx="2" ry="2" />
+<text  x="1185.29" y="623.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::compare (1,333,333 samples, 0.33%)</title><rect x="904.6" y="309" width="3.9" height="15.0" fill="rgb(235,93,26)" rx="2" ry="2" />
+<text  x="907.64" y="319.5" ></text>
+</g>
+<g >
+<title>__lru_cache_add (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="581" width="3.9" height="15.0" fill="rgb(219,157,7)" rx="2" ry="2" />
+<text  x="1189.14" y="591.5" ></text>
+</g>
+<g >
+<title>leveldb::GetVarint32Ptr (2,666,666 samples, 0.65%)</title><rect x="457.3" y="389" width="7.7" height="15.0" fill="rgb(233,36,22)" rx="2" ry="2" />
+<text  x="460.32" y="399.5" ></text>
+</g>
+<g >
+<title>copy_page_from_iter (5,333,332 samples, 1.31%)</title><rect x="588.4" y="181" width="15.5" height="15.0" fill="rgb(207,60,46)" rx="2" ry="2" />
+<text  x="591.43" y="191.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="645" width="3.9" height="15.0" fill="rgb(250,200,42)" rx="2" ry="2" />
+<text  x="1166.01" y="655.5" ></text>
+</g>
+<g >
+<title>ext4_mark_inode_dirty (7,999,998 samples, 1.96%)</title><rect x="360.9" y="501" width="23.2" height="15.0" fill="rgb(216,50,20)" rx="2" ry="2" />
+<text  x="363.92" y="511.5" >e..</text>
+</g>
+<g >
+<title>std::operator==&lt;leveldb::DBImpl::Writer*, leveldb::DBImpl::Writer*&amp;, leveldb::DBImpl::Writer**&gt; (1,333,333 samples, 0.33%)</title><rect x="1031.9" y="453" width="3.9" height="15.0" fill="rgb(229,32,11)" rx="2" ry="2" />
+<text  x="1034.90" y="463.5" ></text>
+</g>
+<g >
+<title>std::swap&lt;char const*&gt; (1,333,333 samples, 0.33%)</title><rect x="1116.7" y="485" width="3.9" height="15.0" fill="rgb(234,111,5)" rx="2" ry="2" />
+<text  x="1119.73" y="495.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;std::__future_base::_State_baseV2&gt;::shared_ptr&lt;std::allocator&lt;std::__future_base::_State_baseV2&gt;&gt; (9,333,331 samples, 2.29%)</title><rect x="1074.3" y="437" width="27.0" height="15.0" fill="rgb(241,127,20)" rx="2" ry="2" />
+<text  x="1077.31" y="447.5" >s..</text>
+</g>
+<g >
+<title>leveldb::Random::Next (1,333,333 samples, 0.33%)</title><rect x="1112.9" y="485" width="3.8" height="15.0" fill="rgb(231,81,17)" rx="2" ry="2" />
+<text  x="1115.88" y="495.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;std::__future_base::_Result&lt;leveldb::Status&gt;, std::__future_base::_Result_base::_Deleter&gt;::release (1,333,333 samples, 0.33%)</title><rect x="430.3" y="501" width="3.9" height="15.0" fill="rgb(212,175,26)" rx="2" ry="2" />
+<text  x="433.33" y="511.5" ></text>
+</g>
+<g >
+<title>std::__future_base::_State_baseV2::_Setter&lt;leveldb::Status, leveldb::Status const&amp;&gt;::operator (9,333,331 samples, 2.29%)</title><rect x="407.2" y="533" width="27.0" height="15.0" fill="rgb(245,18,35)" rx="2" ry="2" />
+<text  x="410.19" y="543.5" >s..</text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;std::__future_base::_Result&lt;leveldb::Status&gt;, std::__future_base::_Result_base::_Deleter&gt;::__uniq_ptr_impl&lt;std::__future_base::_Result_base::_Deleter&gt; (2,666,666 samples, 0.65%)</title><rect x="422.6" y="501" width="7.7" height="15.0" fill="rgb(217,21,46)" rx="2" ry="2" />
+<text  x="425.61" y="511.5" ></text>
+</g>
+<g >
+<title>leveldb::MemTableIterator::key (3,999,999 samples, 0.98%)</title><rect x="453.5" y="421" width="11.5" height="15.0" fill="rgb(231,180,33)" rx="2" ry="2" />
+<text  x="456.46" y="431.5" ></text>
+</g>
+<g >
+<title>pipe_write (11,999,997 samples, 2.94%)</title><rect x="623.1" y="181" width="34.7" height="15.0" fill="rgb(223,183,19)" rx="2" ry="2" />
+<text  x="626.14" y="191.5" >pi..</text>
+</g>
+<g >
+<title>std::_Function_handler&lt;std::unique_ptr&lt;std::__future_base::_Result_base, std::__future_base::_Result_base::_Deleter&gt;  (9,333,331 samples, 2.29%)</title><rect x="407.2" y="549" width="27.0" height="15.0" fill="rgb(219,96,45)" rx="2" ry="2" />
+<text  x="410.19" y="559.5" >s..</text>
+</g>
+<g >
+<title>pipe_write (7,999,998 samples, 1.96%)</title><rect x="588.4" y="197" width="23.2" height="15.0" fill="rgb(247,225,8)" rx="2" ry="2" />
+<text  x="591.43" y="207.5" >p..</text>
+</g>
+<g >
+<title>pmem_copy_from_iter (2,666,666 samples, 0.65%)</title><rect x="60.1" y="485" width="7.7" height="15.0" fill="rgb(225,19,4)" rx="2" ry="2" />
+<text  x="63.13" y="495.5" ></text>
+</g>
+<g >
+<title>std::call_once&lt;void  (9,333,331 samples, 2.29%)</title><rect x="407.2" y="661" width="27.0" height="15.0" fill="rgb(249,150,40)" rx="2" ry="2" />
+<text  x="410.19" y="671.5" >s..</text>
+</g>
+<g >
+<title>std::__invoke&lt;void  (9,333,331 samples, 2.29%)</title><rect x="407.2" y="613" width="27.0" height="15.0" fill="rgb(253,117,27)" rx="2" ry="2" />
+<text  x="410.19" y="623.5" >s..</text>
+</g>
+<g >
+<title>__x64_sys_clone (1,333,333 samples, 0.33%)</title><rect x="37.0" y="533" width="3.8" height="15.0" fill="rgb(244,17,10)" rx="2" ry="2" />
+<text  x="39.99" y="543.5" ></text>
+</g>
+<g >
+<title>iomap_apply (114,666,638 samples, 28.10%)</title><rect x="60.1" y="533" width="331.7" height="15.0" fill="rgb(207,124,30)" rx="2" ry="2" />
+<text  x="63.13" y="543.5" >iomap_apply</text>
+</g>
+<g >
+<title>copy_process.part.35 (1,333,333 samples, 0.33%)</title><rect x="37.0" y="501" width="3.8" height="15.0" fill="rgb(216,182,30)" rx="2" ry="2" />
+<text  x="39.99" y="511.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;char, std::allocator&lt;char&gt; &gt;::_M_default_append (5,333,332 samples, 1.31%)</title><rect x="657.8" y="373" width="15.5" height="15.0" fill="rgb(247,88,19)" rx="2" ry="2" />
+<text  x="660.84" y="383.5" ></text>
+</g>
+<g >
+<title>leveldb::crc32c::(anonymous namespace)::ReadUint32LE (1,333,333 samples, 0.33%)</title><rect x="546.0" y="325" width="3.9" height="15.0" fill="rgb(225,8,29)" rx="2" ry="2" />
+<text  x="549.01" y="335.5" ></text>
+</g>
+<g >
+<title>ext4_file_write_iter (114,666,638 samples, 28.10%)</title><rect x="60.1" y="565" width="331.7" height="15.0" fill="rgb(226,205,30)" rx="2" ry="2" />
+<text  x="63.13" y="575.5" >ext4_file_write_iter</text>
+</g>
+<g >
+<title>pmem_flush (29,333,326 samples, 7.19%)</title><rect x="573.0" y="389" width="84.8" height="15.0" fill="rgb(231,43,19)" rx="2" ry="2" />
+<text  x="576.01" y="399.5" >pmem_flush</text>
+</g>
+<g >
+<title>leveldb::Slice::data (1,333,333 samples, 0.33%)</title><rect x="966.3" y="421" width="3.9" height="15.0" fill="rgb(230,125,30)" rx="2" ry="2" />
+<text  x="969.34" y="431.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="437" width="7.7" height="15.0" fill="rgb(227,23,36)" rx="2" ry="2" />
+<text  x="1108.16" y="447.5" ></text>
+</g>
+<g >
+<title>std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;void  (234,666,608 samples, 57.52%)</title><rect x="453.5" y="677" width="678.7" height="15.0" fill="rgb(242,14,45)" rx="2" ry="2" />
+<text  x="456.46" y="687.5" >std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;void </text>
+</g>
+<g >
+<title>__wake_up_sync_key (1,333,333 samples, 0.33%)</title><rect x="623.1" y="165" width="3.9" height="15.0" fill="rgb(236,94,5)" rx="2" ry="2" />
+<text  x="626.14" y="175.5" ></text>
+</g>
+<g >
+<title>leveldb::MemHashTable::getTableValue (6,666,665 samples, 1.63%)</title><rect x="499.7" y="389" width="19.3" height="15.0" fill="rgb(227,170,50)" rx="2" ry="2" />
+<text  x="502.74" y="399.5" ></text>
+</g>
+<g >
+<title>dump_emit (11,999,997 samples, 2.94%)</title><rect x="576.9" y="245" width="34.7" height="15.0" fill="rgb(251,51,47)" rx="2" ry="2" />
+<text  x="579.86" y="255.5" >du..</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (2,666,666 samples, 0.65%)</title><rect x="21.6" y="661" width="7.7" height="15.0" fill="rgb(249,135,32)" rx="2" ry="2" />
+<text  x="24.57" y="671.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_find_before_node (1,333,333 samples, 0.33%)</title><rect x="503.6" y="325" width="3.9" height="15.0" fill="rgb(212,207,35)" rx="2" ry="2" />
+<text  x="506.59" y="335.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (1,333,333 samples, 0.33%)</title><rect x="569.2" y="37" width="3.8" height="15.0" fill="rgb(237,185,31)" rx="2" ry="2" />
+<text  x="572.15" y="47.5" ></text>
+</g>
+<g >
+<title>_copy_from_iter_flushcache (1,333,333 samples, 0.33%)</title><rect x="64.0" y="469" width="3.8" height="15.0" fill="rgb(234,145,43)" rx="2" ry="2" />
+<text  x="66.99" y="479.5" ></text>
+</g>
+<g >
+<title>std::future&lt;leveldb::Status&gt;::future (1,333,333 samples, 0.33%)</title><rect x="1070.5" y="469" width="3.8" height="15.0" fill="rgb(246,97,24)" rx="2" ry="2" />
+<text  x="1073.46" y="479.5" ></text>
+</g>
+<g >
+<title>std::promise&lt;leveldb::Status&gt;::get_future (1,333,333 samples, 0.33%)</title><rect x="1070.5" y="485" width="3.8" height="15.0" fill="rgb(210,79,47)" rx="2" ry="2" />
+<text  x="1073.46" y="495.5" ></text>
+</g>
+<g >
+<title>exit_to_usermode_loop (27,999,993 samples, 6.86%)</title><rect x="576.9" y="325" width="80.9" height="15.0" fill="rgb(214,198,41)" rx="2" ry="2" />
+<text  x="579.86" y="335.5" >exit_to_u..</text>
+</g>
+<g >
+<title>queued_read_lock_slowpath (2,666,666 samples, 0.65%)</title><rect x="349.3" y="437" width="7.8" height="15.0" fill="rgb(241,136,26)" rx="2" ry="2" />
+<text  x="352.35" y="447.5" ></text>
+</g>
+<g >
+<title>__clone (1,333,333 samples, 0.33%)</title><rect x="37.0" y="581" width="3.8" height="15.0" fill="rgb(247,54,33)" rx="2" ry="2" />
+<text  x="39.99" y="591.5" ></text>
+</g>
+<g >
+<title>unmap_vmas (1,333,333 samples, 0.33%)</title><rect x="1174.6" y="549" width="3.8" height="15.0" fill="rgb(251,156,22)" rx="2" ry="2" />
+<text  x="1177.58" y="559.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::CompactMemTable (75,999,981 samples, 18.63%)</title><rect x="453.5" y="469" width="219.8" height="15.0" fill="rgb(246,58,10)" rx="2" ry="2" />
+<text  x="456.46" y="479.5" >leveldb::DBImpl::CompactMemTa..</text>
+</g>
+<g >
+<title>std::promise&lt;leveldb::Status&gt;::promise (10,666,664 samples, 2.61%)</title><rect x="1074.3" y="485" width="30.9" height="15.0" fill="rgb(223,121,48)" rx="2" ry="2" />
+<text  x="1077.31" y="495.5" >st..</text>
+</g>
+<g >
+<title>__mutex_lock_slowpath (2,666,666 samples, 0.65%)</title><rect x="603.9" y="165" width="7.7" height="15.0" fill="rgb(210,114,1)" rx="2" ry="2" />
+<text  x="606.86" y="175.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_insert_bucket_begin (1,333,333 samples, 0.33%)</title><rect x="507.5" y="325" width="3.8" height="15.0" fill="rgb(238,3,23)" rx="2" ry="2" />
+<text  x="510.45" y="335.5" ></text>
+</g>
+<g >
+<title>show_opcodes (1,333,333 samples, 0.33%)</title><rect x="573.0" y="277" width="3.9" height="15.0" fill="rgb(242,140,7)" rx="2" ry="2" />
+<text  x="576.01" y="287.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::data (2,666,666 samples, 0.65%)</title><rect x="923.9" y="325" width="7.7" height="15.0" fill="rgb(252,165,30)" rx="2" ry="2" />
+<text  x="926.92" y="335.5" ></text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;std::__future_base::_State_baseV2&gt; &gt;::destroy&lt;std::__future_base::_State_baseV2&gt; (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="389" width="7.7" height="15.0" fill="rgb(217,188,49)" rx="2" ry="2" />
+<text  x="1108.16" y="399.5" ></text>
+</g>
+<g >
+<title>mutex_lock (2,666,666 samples, 0.65%)</title><rect x="603.9" y="181" width="7.7" height="15.0" fill="rgb(246,178,2)" rx="2" ry="2" />
+<text  x="606.86" y="191.5" ></text>
+</g>
+<g >
+<title>_pthread_cleanup_pop (1,333,333 samples, 0.33%)</title><rect x="434.2" y="677" width="3.8" height="15.0" fill="rgb(250,164,16)" rx="2" ry="2" />
+<text  x="437.18" y="687.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::new_allocator&lt;std::__future_base::_State_baseV2&gt;::~new_allocator (1,333,333 samples, 0.33%)</title><rect x="1101.3" y="437" width="3.9" height="15.0" fill="rgb(248,196,40)" rx="2" ry="2" />
+<text  x="1104.31" y="447.5" ></text>
+</g>
+<g >
+<title>__memset_avx2_unaligned_erms (1,333,333 samples, 0.33%)</title><rect x="1155.3" y="693" width="3.9" height="15.0" fill="rgb(219,206,29)" rx="2" ry="2" />
+<text  x="1158.29" y="703.5" ></text>
+</g>
+<g >
+<title>leveldb::Benchmark::ThreadBody (158,666,627 samples, 38.89%)</title><rect x="673.3" y="549" width="458.9" height="15.0" fill="rgb(228,203,27)" rx="2" ry="2" />
+<text  x="676.27" y="559.5" >leveldb::Benchmark::ThreadBody</text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;std::__future_base::_State_baseV2,  (1,333,333 samples, 0.33%)</title><rect x="1066.6" y="437" width="3.9" height="15.0" fill="rgb(214,12,29)" rx="2" ry="2" />
+<text  x="1069.60" y="447.5" ></text>
+</g>
+<g >
+<title>std::promise&lt;leveldb::Status&gt;::set_value (5,333,332 samples, 1.31%)</title><rect x="1047.3" y="469" width="15.4" height="15.0" fill="rgb(205,184,46)" rx="2" ry="2" />
+<text  x="1050.32" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::Random::Uniform (1,333,333 samples, 0.33%)</title><rect x="1112.9" y="501" width="3.8" height="15.0" fill="rgb(216,187,48)" rx="2" ry="2" />
+<text  x="1115.88" y="511.5" ></text>
+</g>
+<g >
+<title>apparmor_file_permission (1,333,333 samples, 0.33%)</title><rect x="391.8" y="565" width="3.8" height="15.0" fill="rgb(206,51,15)" rx="2" ry="2" />
+<text  x="394.76" y="575.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (2,666,666 samples, 0.65%)</title><rect x="561.4" y="117" width="7.8" height="15.0" fill="rgb(233,0,17)" rx="2" ry="2" />
+<text  x="564.44" y="127.5" ></text>
+</g>
+<g >
+<title>std::function&lt;std::unique_ptr&lt;std::__future_base::_Result_base, std::__future_base::_Result_base::_Deleter&gt;  (2,666,666 samples, 0.65%)</title><rect x="1055.0" y="453" width="7.7" height="15.0" fill="rgb(227,70,50)" rx="2" ry="2" />
+<text  x="1058.03" y="463.5" ></text>
+</g>
+<g >
+<title>handle_mm_fault (5,333,332 samples, 1.31%)</title><rect x="557.6" y="309" width="15.4" height="15.0" fill="rgb(234,108,52)" rx="2" ry="2" />
+<text  x="560.58" y="319.5" ></text>
+</g>
+<g >
+<title>arch_freq_prepare_all (2,666,666 samples, 0.65%)</title><rect x="21.6" y="501" width="7.7" height="15.0" fill="rgb(244,111,6)" rx="2" ry="2" />
+<text  x="24.57" y="511.5" ></text>
+</g>
+<g >
+<title>leveldb::WriteBatch::Iterate (71,999,982 samples, 17.65%)</title><rect x="742.7" y="453" width="208.2" height="15.0" fill="rgb(211,148,26)" rx="2" ry="2" />
+<text  x="745.68" y="463.5" >leveldb::WriteBatch::Iterate</text>
+</g>
+<g >
+<title>std::_Sp_counted_ptr_inplace&lt;std::__future_base::_State_baseV2, std::allocator&lt;std::__future_base::_State_baseV2&gt;,  (9,333,331 samples, 2.29%)</title><rect x="1074.3" y="389" width="27.0" height="15.0" fill="rgb(236,88,50)" rx="2" ry="2" />
+<text  x="1077.31" y="399.5" >s..</text>
+</g>
+<g >
+<title>ext4_inode_csum.isra.59 (1,333,333 samples, 0.33%)</title><rect x="387.9" y="453" width="3.9" height="15.0" fill="rgb(229,229,47)" rx="2" ry="2" />
+<text  x="390.91" y="463.5" ></text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, std::__future_base::_Result&lt;leveldb::Status&gt;*, std::__future_base::_Result_base::_Deleter&gt;::_Tuple_impl&lt;std::__future_base::_Result&lt;leveldb::Status&gt;*&amp;, std::__future_base::_Result_base::_Deleter, void&gt; (1,333,333 samples, 0.33%)</title><rect x="426.5" y="469" width="3.8" height="15.0" fill="rgb(227,4,31)" rx="2" ry="2" />
+<text  x="429.47" y="479.5" ></text>
+</g>
+<g >
+<title>_do_fork (1,333,333 samples, 0.33%)</title><rect x="37.0" y="517" width="3.8" height="15.0" fill="rgb(240,75,32)" rx="2" ry="2" />
+<text  x="39.99" y="527.5" ></text>
+</g>
+<g >
+<title>__ext4_handle_dirty_super (1,333,333 samples, 0.33%)</title><rect x="384.1" y="485" width="3.8" height="15.0" fill="rgb(245,22,37)" rx="2" ry="2" />
+<text  x="387.05" y="495.5" ></text>
+</g>
+<g >
+<title>irq_exit (1,333,333 samples, 0.33%)</title><rect x="52.4" y="549" width="3.9" height="15.0" fill="rgb(211,115,34)" rx="2" ry="2" />
+<text  x="55.42" y="559.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_create (1,333,333 samples, 0.33%)</title><rect x="1182.3" y="693" width="3.8" height="15.0" fill="rgb(215,114,2)" rx="2" ry="2" />
+<text  x="1185.29" y="703.5" ></text>
+</g>
+<g >
+<title>page_fault (5,333,332 samples, 1.31%)</title><rect x="557.6" y="357" width="15.4" height="15.0" fill="rgb(240,163,40)" rx="2" ry="2" />
+<text  x="560.58" y="367.5" ></text>
+</g>
+<g >
+<title>ext4_map_blocks (1,333,333 samples, 0.33%)</title><rect x="569.2" y="197" width="3.8" height="15.0" fill="rgb(232,147,3)" rx="2" ry="2" />
+<text  x="572.15" y="207.5" ></text>
+</g>
+<g >
+<title>unmap_page_range (1,333,333 samples, 0.33%)</title><rect x="1174.6" y="517" width="3.8" height="15.0" fill="rgb(244,116,10)" rx="2" ry="2" />
+<text  x="1177.58" y="527.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::data (2,666,666 samples, 0.65%)</title><rect x="488.2" y="389" width="7.7" height="15.0" fill="rgb(241,88,47)" rx="2" ry="2" />
+<text  x="491.17" y="399.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::PosixEnv::BackgroundThreadNodeEntryPoint (75,999,981 samples, 18.63%)</title><rect x="453.5" y="549" width="219.8" height="15.0" fill="rgb(214,52,8)" rx="2" ry="2" />
+<text  x="456.46" y="559.5" >leveldb::(anonymous namespace..</text>
+</g>
+<g >
+<title>truncate_inode_pages_range (1,333,333 samples, 0.33%)</title><rect x="29.3" y="469" width="3.8" height="15.0" fill="rgb(224,134,2)" rx="2" ry="2" />
+<text  x="32.28" y="479.5" ></text>
+</g>
+<g >
+<title>__getblk_gfp (1,333,333 samples, 0.33%)</title><rect x="33.1" y="357" width="3.9" height="15.0" fill="rgb(234,134,48)" rx="2" ry="2" />
+<text  x="36.14" y="367.5" ></text>
+</g>
+<g >
+<title>__do_softirq (1,333,333 samples, 0.33%)</title><rect x="869.9" y="261" width="3.9" height="15.0" fill="rgb(253,116,45)" rx="2" ry="2" />
+<text  x="872.93" y="271.5" ></text>
+</g>
+<g >
+<title>leveldb::log::Writer::EmitPhysicalRecord (23,999,994 samples, 5.88%)</title><rect x="954.8" y="453" width="69.4" height="15.0" fill="rgb(206,175,29)" rx="2" ry="2" />
+<text  x="957.77" y="463.5" >leveldb..</text>
+</g>
+<g >
+<title>_IO_vsnprintf (2,666,666 samples, 0.65%)</title><rect x="13.9" y="677" width="7.7" height="15.0" fill="rgb(229,88,44)" rx="2" ry="2" />
+<text  x="16.86" y="687.5" ></text>
+</g>
+<g >
+<title>do_sys_open (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="597" width="3.9" height="15.0" fill="rgb(234,176,34)" rx="2" ry="2" />
+<text  x="1166.01" y="607.5" ></text>
+</g>
+<g >
+<title>do_exit (2,666,666 samples, 0.65%)</title><rect x="1170.7" y="597" width="7.7" height="15.0" fill="rgb(232,210,17)" rx="2" ry="2" />
+<text  x="1173.72" y="607.5" ></text>
+</g>
+<g >
+<title>console_unlock (1,333,333 samples, 0.33%)</title><rect x="573.0" y="197" width="3.9" height="15.0" fill="rgb(244,110,17)" rx="2" ry="2" />
+<text  x="576.01" y="207.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;std::__future_base::_Result&lt;leveldb::Status&gt;, std::__future_base::_Result_base::_Deleter&gt;::get (1,333,333 samples, 0.33%)</title><rect x="430.3" y="485" width="3.9" height="15.0" fill="rgb(208,219,19)" rx="2" ry="2" />
+<text  x="433.33" y="495.5" ></text>
+</g>
+<g >
+<title>alloc_pages_vma (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="581" width="3.8" height="15.0" fill="rgb(210,81,40)" rx="2" ry="2" />
+<text  x="1142.87" y="591.5" ></text>
+</g>
+<g >
+<title>__ext4_handle_dirty_metadata (2,666,666 samples, 0.65%)</title><rect x="364.8" y="469" width="7.7" height="15.0" fill="rgb(232,89,28)" rx="2" ry="2" />
+<text  x="367.77" y="479.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Map_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt;, true&gt;::operator[] (5,333,332 samples, 1.31%)</title><rect x="503.6" y="357" width="15.4" height="15.0" fill="rgb(242,71,39)" rx="2" ry="2" />
+<text  x="506.59" y="367.5" ></text>
+</g>
+<g >
+<title>std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem*&gt;::~allocator (1,333,333 samples, 0.33%)</title><rect x="40.8" y="421" width="3.9" height="15.0" fill="rgb(228,130,7)" rx="2" ry="2" />
+<text  x="43.85" y="431.5" ></text>
+</g>
+<g >
+<title>apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="869.9" y="309" width="3.9" height="15.0" fill="rgb(232,145,23)" rx="2" ry="2" />
+<text  x="872.93" y="319.5" ></text>
+</g>
+<g >
+<title>_itoa_word (1,333,333 samples, 0.33%)</title><rect x="13.9" y="661" width="3.8" height="15.0" fill="rgb(247,56,25)" rx="2" ry="2" />
+<text  x="16.86" y="671.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::RandomGenerator::Generate (1,333,333 samples, 0.33%)</title><rect x="673.3" y="501" width="3.8" height="15.0" fill="rgb(249,138,32)" rx="2" ry="2" />
+<text  x="676.27" y="511.5" ></text>
+</g>
+<g >
+<title>smp_apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="52.4" y="565" width="3.9" height="15.0" fill="rgb(222,216,54)" rx="2" ry="2" />
+<text  x="55.42" y="575.5" ></text>
+</g>
+<g >
+<title>std::deque&lt;leveldb::DBImpl::Writer*, std::allocator&lt;leveldb::DBImpl::Writer*&gt; &gt;::end (2,666,666 samples, 0.65%)</title><rect x="723.4" y="453" width="7.7" height="15.0" fill="rgb(208,22,4)" rx="2" ry="2" />
+<text  x="726.40" y="463.5" ></text>
+</g>
+<g >
+<title>vfs_fsync_range (3,999,999 samples, 0.98%)</title><rect x="557.6" y="213" width="11.6" height="15.0" fill="rgb(219,48,50)" rx="2" ry="2" />
+<text  x="560.58" y="223.5" ></text>
+</g>
+<g >
+<title>__do_page_fault (1,333,333 samples, 0.33%)</title><rect x="1151.4" y="645" width="3.9" height="15.0" fill="rgb(247,229,53)" rx="2" ry="2" />
+<text  x="1154.44" y="655.5" ></text>
+</g>
+<g >
+<title>__alloc_pages_nodemask (2,666,666 samples, 0.65%)</title><rect x="627.0" y="149" width="7.7" height="15.0" fill="rgb(209,104,38)" rx="2" ry="2" />
+<text  x="629.99" y="159.5" ></text>
+</g>
+<g >
+<title>std::move&lt;leveldb::DBImpl::Writer*&amp;&gt; (1,333,333 samples, 0.33%)</title><rect x="1043.5" y="469" width="3.8" height="15.0" fill="rgb(245,98,50)" rx="2" ry="2" />
+<text  x="1046.46" y="479.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (1,333,333 samples, 0.33%)</title><rect x="1170.7" y="469" width="3.9" height="15.0" fill="rgb(227,191,0)" rx="2" ry="2" />
+<text  x="1173.72" y="479.5" ></text>
+</g>
+<g >
+<title>page_fault (1,333,333 samples, 0.33%)</title><rect x="1151.4" y="677" width="3.9" height="15.0" fill="rgb(222,25,11)" rx="2" ry="2" />
+<text  x="1154.44" y="687.5" ></text>
+</g>
+<g >
+<title>std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;void  (234,666,608 samples, 57.52%)</title><rect x="453.5" y="629" width="678.7" height="15.0" fill="rgb(220,175,33)" rx="2" ry="2" />
+<text  x="456.46" y="639.5" >std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;void </text>
+</g>
+<g >
+<title>std::allocator&lt;std::__future_base::_State_baseV2&gt;::allocator (1,333,333 samples, 0.33%)</title><rect x="1082.0" y="373" width="3.9" height="15.0" fill="rgb(229,37,18)" rx="2" ry="2" />
+<text  x="1085.03" y="383.5" ></text>
+</g>
+<g >
+<title>load_balance (1,333,333 samples, 0.33%)</title><rect x="52.4" y="485" width="3.9" height="15.0" fill="rgb(209,133,39)" rx="2" ry="2" />
+<text  x="55.42" y="495.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::PosixEnv::BackgroundThreadNodeMain (75,999,981 samples, 18.63%)</title><rect x="453.5" y="533" width="219.8" height="15.0" fill="rgb(221,90,18)" rx="2" ry="2" />
+<text  x="456.46" y="543.5" >leveldb::(anonymous namespace..</text>
+</g>
+<g >
+<title>pagevec_lru_move_fn (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="565" width="3.9" height="15.0" fill="rgb(227,100,23)" rx="2" ry="2" />
+<text  x="1189.14" y="575.5" ></text>
+</g>
+<g >
+<title>__x64_sys_openat (2,666,666 samples, 0.65%)</title><rect x="21.6" y="629" width="7.7" height="15.0" fill="rgb(226,100,52)" rx="2" ry="2" />
+<text  x="24.57" y="639.5" ></text>
+</g>
+<g >
+<title>rcu_report_qs_rnp (1,333,333 samples, 0.33%)</title><rect x="869.9" y="229" width="3.9" height="15.0" fill="rgb(224,8,6)" rx="2" ry="2" />
+<text  x="872.93" y="239.5" ></text>
+</g>
+<g >
+<title>leveldb::test::RandomString (9,333,331 samples, 2.29%)</title><rect x="684.8" y="469" width="27.0" height="15.0" fill="rgb(243,57,42)" rx="2" ry="2" />
+<text  x="687.84" y="479.5" >l..</text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_insert_unique_node (2,666,666 samples, 0.65%)</title><rect x="507.5" y="341" width="7.7" height="15.0" fill="rgb(242,70,44)" rx="2" ry="2" />
+<text  x="510.45" y="351.5" ></text>
+</g>
+<g >
+<title>mutex_unlock (2,666,666 samples, 0.65%)</title><rect x="48.6" y="597" width="7.7" height="15.0" fill="rgb(228,32,21)" rx="2" ry="2" />
+<text  x="51.56" y="607.5" ></text>
+</g>
+<g >
+<title>std::call_once&lt;void  (9,333,331 samples, 2.29%)</title><rect x="407.2" y="629" width="27.0" height="15.0" fill="rgb(210,221,19)" rx="2" ry="2" />
+<text  x="410.19" y="639.5" >s..</text>
+</g>
+<g >
+<title>memmove_nodrain_avx512f_clwb (5,333,332 samples, 1.31%)</title><rect x="557.6" y="389" width="15.4" height="15.0" fill="rgb(213,93,22)" rx="2" ry="2" />
+<text  x="560.58" y="399.5" ></text>
+</g>
+<g >
+<title>ext4_group_desc_csum (1,333,333 samples, 0.33%)</title><rect x="330.1" y="421" width="3.8" height="15.0" fill="rgb(225,16,19)" rx="2" ry="2" />
+<text  x="333.07" y="431.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Mod_range_hashing::operator (1,333,333 samples, 0.33%)</title><rect x="503.6" y="277" width="3.9" height="15.0" fill="rgb(252,128,6)" rx="2" ry="2" />
+<text  x="506.59" y="287.5" ></text>
+</g>
+<g >
+<title>__vfs_read (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="597" width="3.9" height="15.0" fill="rgb(239,90,0)" rx="2" ry="2" />
+<text  x="1181.43" y="607.5" ></text>
+</g>
+<g >
+<title>ksys_read (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="629" width="3.9" height="15.0" fill="rgb(237,11,46)" rx="2" ry="2" />
+<text  x="1181.43" y="639.5" ></text>
+</g>
+<g >
+<title>ext4_get_group_desc (1,333,333 samples, 0.33%)</title><rect x="333.9" y="421" width="3.9" height="15.0" fill="rgb(245,214,20)" rx="2" ry="2" />
+<text  x="336.92" y="431.5" ></text>
+</g>
+<g >
+<title>tc_deletearray_nothrow (2,666,666 samples, 0.65%)</title><rect x="1132.2" y="677" width="7.7" height="15.0" fill="rgb(238,122,5)" rx="2" ry="2" />
+<text  x="1135.16" y="687.5" ></text>
+</g>
+<g >
+<title>ext4_dax_writepages (1,333,333 samples, 0.33%)</title><rect x="557.6" y="133" width="3.8" height="15.0" fill="rgb(239,74,28)" rx="2" ry="2" />
+<text  x="560.58" y="143.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::MakeRoomForWrite (1,333,333 samples, 0.33%)</title><rect x="731.1" y="469" width="3.9" height="15.0" fill="rgb(222,49,54)" rx="2" ry="2" />
+<text  x="734.11" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::DecodeFixed32 (5,333,332 samples, 1.31%)</title><rect x="1008.8" y="405" width="15.4" height="15.0" fill="rgb(234,203,30)" rx="2" ry="2" />
+<text  x="1011.76" y="415.5" ></text>
+</g>
+<g >
+<title>do_filp_open (1,333,333 samples, 0.33%)</title><rect x="33.1" y="485" width="3.9" height="15.0" fill="rgb(236,151,23)" rx="2" ry="2" />
+<text  x="36.14" y="495.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (2,666,666 samples, 0.65%)</title><rect x="21.6" y="645" width="7.7" height="15.0" fill="rgb(221,49,3)" rx="2" ry="2" />
+<text  x="24.57" y="655.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_default_n_a&lt;std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt;*, unsigned long, std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt; &gt; (1,333,333 samples, 0.33%)</title><rect x="40.8" y="549" width="3.9" height="15.0" fill="rgb(249,101,49)" rx="2" ry="2" />
+<text  x="43.85" y="559.5" ></text>
+</g>
+<g >
+<title>std::__future_base::_State_baseV2::_M_set_result (2,666,666 samples, 0.65%)</title><rect x="1047.3" y="453" width="7.7" height="15.0" fill="rgb(232,95,22)" rx="2" ry="2" />
+<text  x="1050.32" y="463.5" ></text>
+</g>
+<g >
+<title>rebalance_domains (1,333,333 samples, 0.33%)</title><rect x="52.4" y="501" width="3.9" height="15.0" fill="rgb(233,111,11)" rx="2" ry="2" />
+<text  x="55.42" y="511.5" ></text>
+</g>
+<g >
+<title>__GI___libc_open (2,666,666 samples, 0.65%)</title><rect x="21.6" y="677" width="7.7" height="15.0" fill="rgb(207,123,52)" rx="2" ry="2" />
+<text  x="24.57" y="687.5" ></text>
+</g>
+<g >
+<title>vfs_open (2,666,666 samples, 0.65%)</title><rect x="21.6" y="565" width="7.7" height="15.0" fill="rgb(216,172,40)" rx="2" ry="2" />
+<text  x="24.57" y="575.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (1,333,333 samples, 0.33%)</title><rect x="869.9" y="181" width="3.9" height="15.0" fill="rgb(243,60,30)" rx="2" ry="2" />
+<text  x="872.93" y="191.5" ></text>
+</g>
+<g >
+<title>jbd2_journal_dirty_metadata (1,333,333 samples, 0.33%)</title><rect x="384.1" y="469" width="3.8" height="15.0" fill="rgb(216,60,20)" rx="2" ry="2" />
+<text  x="387.05" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::crc32c::Extend (3,999,999 samples, 0.98%)</title><rect x="538.3" y="341" width="11.6" height="15.0" fill="rgb(224,225,34)" rx="2" ry="2" />
+<text  x="541.30" y="351.5" ></text>
+</g>
+<g >
+<title>std::move&lt;std::__future_base::_State_baseV2::_Setter&lt;leveldb::Status, leveldb::Status const&amp;&gt;&amp;&gt; (1,333,333 samples, 0.33%)</title><rect x="1055.0" y="421" width="3.9" height="15.0" fill="rgb(247,162,8)" rx="2" ry="2" />
+<text  x="1058.03" y="431.5" ></text>
+</g>
+<g >
+<title>leveldb::SkipList&lt;char const*, leveldb::MemTable::KeyComparator&gt;::FindGreaterOrEqual (66,666,650 samples, 16.34%)</title><rect x="746.5" y="389" width="192.8" height="15.0" fill="rgb(222,217,37)" rx="2" ry="2" />
+<text  x="749.54" y="399.5" >leveldb::SkipList&lt;char co..</text>
+</g>
+<g >
+<title>__gnu_cxx::new_allocator&lt;leveldb::DBImpl::Writer*&gt;::allocate (1,333,333 samples, 0.33%)</title><rect x="1039.6" y="405" width="3.9" height="15.0" fill="rgb(226,11,33)" rx="2" ry="2" />
+<text  x="1042.61" y="415.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::MemTableInserter::Put (70,666,649 samples, 17.32%)</title><rect x="742.7" y="437" width="204.4" height="15.0" fill="rgb(233,165,47)" rx="2" ry="2" />
+<text  x="745.68" y="447.5" >leveldb::(anonymous namesp..</text>
+</g>
+<g >
+<title>do_sys_open (2,666,666 samples, 0.65%)</title><rect x="21.6" y="613" width="7.7" height="15.0" fill="rgb(206,224,11)" rx="2" ry="2" />
+<text  x="24.57" y="623.5" ></text>
+</g>
+<g >
+<title>__bitmap_and (1,333,333 samples, 0.33%)</title><rect x="52.4" y="469" width="3.9" height="15.0" fill="rgb(226,2,17)" rx="2" ry="2" />
+<text  x="55.42" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::MemTable::Add (70,666,649 samples, 17.32%)</title><rect x="742.7" y="421" width="204.4" height="15.0" fill="rgb(212,8,5)" rx="2" ry="2" />
+<text  x="745.68" y="431.5" >leveldb::MemTable::Add</text>
+</g>
+<g >
+<title>_IO_default_xsputn (1,333,333 samples, 0.33%)</title><rect x="1143.7" y="693" width="3.9" height="15.0" fill="rgb(249,2,43)" rx="2" ry="2" />
+<text  x="1146.73" y="703.5" ></text>
+</g>
+<g >
+<title>__open64 (1,333,333 samples, 0.33%)</title><rect x="33.1" y="565" width="3.9" height="15.0" fill="rgb(217,223,42)" rx="2" ry="2" />
+<text  x="36.14" y="575.5" ></text>
+</g>
+<g >
+<title>vprintk_emit (1,333,333 samples, 0.33%)</title><rect x="573.0" y="213" width="3.9" height="15.0" fill="rgb(226,133,2)" rx="2" ry="2" />
+<text  x="576.01" y="223.5" ></text>
+</g>
+<g >
+<title>[unknown] (391,999,902 samples, 96.08%)</title><rect x="10.0" y="693" width="1133.7" height="15.0" fill="rgb(218,26,42)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" >[unknown]</text>
+</g>
+<g >
+<title>__x64_sys_write (119,999,970 samples, 29.41%)</title><rect x="48.6" y="629" width="347.0" height="15.0" fill="rgb(209,74,51)" rx="2" ry="2" />
+<text  x="51.56" y="639.5" >__x64_sys_write</text>
+</g>
+<g >
+<title>leveldb::SkipList&lt;char const*, leveldb::MemTable::KeyComparator&gt;::Node::NoBarrier_SetNext (1,333,333 samples, 0.33%)</title><rect x="939.3" y="389" width="3.9" height="15.0" fill="rgb(246,215,16)" rx="2" ry="2" />
+<text  x="942.35" y="399.5" ></text>
+</g>
+<g >
+<title>__pthread_once_slow (11,999,997 samples, 2.94%)</title><rect x="399.5" y="677" width="34.7" height="15.0" fill="rgb(226,216,30)" rx="2" ry="2" />
+<text  x="402.48" y="687.5" >__..</text>
+</g>
+<g >
+<title>submit_bio_wait_endio (1,333,333 samples, 0.33%)</title><rect x="569.2" y="69" width="3.8" height="15.0" fill="rgb(233,104,46)" rx="2" ry="2" />
+<text  x="572.15" y="79.5" ></text>
+</g>
+<g >
+<title>__do_page_fault (1,333,333 samples, 0.33%)</title><rect x="573.0" y="325" width="3.9" height="15.0" fill="rgb(228,198,47)" rx="2" ry="2" />
+<text  x="576.01" y="335.5" ></text>
+</g>
+<g >
+<title>leveldb::GetVarint32Ptr (13,333,330 samples, 3.27%)</title><rect x="835.2" y="325" width="38.6" height="15.0" fill="rgb(210,89,32)" rx="2" ry="2" />
+<text  x="838.23" y="335.5" >lev..</text>
+</g>
+<g >
+<title>leveldb::GetLengthPrefixedSlice (2,666,666 samples, 0.65%)</title><rect x="457.3" y="405" width="7.7" height="15.0" fill="rgb(237,225,29)" rx="2" ry="2" />
+<text  x="460.32" y="415.5" ></text>
+</g>
+<g >
+<title>std::swap&lt;char const*&gt; (1,333,333 samples, 0.33%)</title><rect x="950.9" y="437" width="3.9" height="15.0" fill="rgb(235,216,51)" rx="2" ry="2" />
+<text  x="953.92" y="447.5" ></text>
+</g>
+<g >
+<title>leveldb::test::CompressibleString (13,333,330 samples, 3.27%)</title><rect x="677.1" y="485" width="38.6" height="15.0" fill="rgb(206,47,4)" rx="2" ry="2" />
+<text  x="680.12" y="495.5" >lev..</text>
+</g>
+<g >
+<title>std::__invoke_impl&lt;void, void  (234,666,608 samples, 57.52%)</title><rect x="453.5" y="565" width="678.7" height="15.0" fill="rgb(222,47,39)" rx="2" ry="2" />
+<text  x="456.46" y="575.5" >std::__invoke_impl&lt;void, void </text>
+</g>
+<g >
+<title>do_page_fault (3,999,999 samples, 0.98%)</title><rect x="661.7" y="245" width="11.6" height="15.0" fill="rgb(251,108,31)" rx="2" ry="2" />
+<text  x="664.70" y="255.5" ></text>
+</g>
+<g >
+<title>ext4_inode_csum_set (2,666,666 samples, 0.65%)</title><rect x="372.5" y="469" width="7.7" height="15.0" fill="rgb(222,192,43)" rx="2" ry="2" />
+<text  x="375.48" y="479.5" ></text>
+</g>
+<g >
+<title>memmove_movnt_avx512f_clwb (5,333,332 samples, 1.31%)</title><rect x="557.6" y="373" width="15.4" height="15.0" fill="rgb(207,157,47)" rx="2" ry="2" />
+<text  x="560.58" y="383.5" ></text>
+</g>
+<g >
+<title>[unknown] (234,666,608 samples, 57.52%)</title><rect x="453.5" y="661" width="678.7" height="15.0" fill="rgb(227,103,51)" rx="2" ry="2" />
+<text  x="456.46" y="671.5" >[unknown]</text>
+</g>
+<g >
+<title>handle_mm_fault (1,333,333 samples, 0.33%)</title><rect x="1151.4" y="629" width="3.9" height="15.0" fill="rgb(233,6,50)" rx="2" ry="2" />
+<text  x="1154.44" y="639.5" ></text>
+</g>
+<g >
+<title>do_page_fault (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="645" width="3.8" height="15.0" fill="rgb(214,226,3)" rx="2" ry="2" />
+<text  x="1142.87" y="655.5" ></text>
+</g>
+<g >
+<title>page_fault (1,333,333 samples, 0.33%)</title><rect x="573.0" y="357" width="3.9" height="15.0" fill="rgb(215,81,2)" rx="2" ry="2" />
+<text  x="576.01" y="367.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::RandomGenerator::RandomGenerator (13,333,330 samples, 3.27%)</title><rect x="677.1" y="501" width="38.6" height="15.0" fill="rgb(251,73,6)" rx="2" ry="2" />
+<text  x="680.12" y="511.5" >lev..</text>
+</g>
+<g >
+<title>leveldb::TableBuilder::WriteBlock (6,666,665 samples, 1.63%)</title><rect x="530.6" y="389" width="19.3" height="15.0" fill="rgb(237,21,37)" rx="2" ry="2" />
+<text  x="533.59" y="399.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (2,666,666 samples, 0.65%)</title><rect x="1147.6" y="693" width="7.7" height="15.0" fill="rgb(214,215,18)" rx="2" ry="2" />
+<text  x="1150.58" y="703.5" ></text>
+</g>
+<g >
+<title>__memset_avx2_erms (5,333,332 samples, 1.31%)</title><rect x="657.8" y="277" width="15.5" height="15.0" fill="rgb(247,58,30)" rx="2" ry="2" />
+<text  x="660.84" y="287.5" ></text>
+</g>
+<g >
+<title>__libc_write (121,333,303 samples, 29.74%)</title><rect x="44.7" y="677" width="350.9" height="15.0" fill="rgb(240,71,30)" rx="2" ry="2" />
+<text  x="47.71" y="687.5" >__libc_write</text>
+</g>
+<g >
+<title>crypto_shash_update (1,333,333 samples, 0.33%)</title><rect x="376.3" y="437" width="3.9" height="15.0" fill="rgb(225,125,39)" rx="2" ry="2" />
+<text  x="379.34" y="447.5" ></text>
+</g>
+<g >
+<title>crc32c_pcl_intel_update (1,333,333 samples, 0.33%)</title><rect x="330.1" y="389" width="3.8" height="15.0" fill="rgb(245,69,41)" rx="2" ry="2" />
+<text  x="333.07" y="399.5" ></text>
+</g>
+<g >
+<title>swake_up (1,333,333 samples, 0.33%)</title><rect x="869.9" y="197" width="3.9" height="15.0" fill="rgb(219,205,19)" rx="2" ry="2" />
+<text  x="872.93" y="207.5" ></text>
+</g>
+<g >
+<title>std::_Deque_base&lt;leveldb::DBImpl::Writer*, std::allocator&lt;leveldb::DBImpl::Writer*&gt; &gt;::_M_allocate_node (1,333,333 samples, 0.33%)</title><rect x="1039.6" y="421" width="3.9" height="15.0" fill="rgb(235,33,6)" rx="2" ry="2" />
+<text  x="1042.61" y="431.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Mod_range_hashing::operator (1,333,333 samples, 0.33%)</title><rect x="522.9" y="309" width="3.8" height="15.0" fill="rgb(219,84,23)" rx="2" ry="2" />
+<text  x="525.88" y="319.5" ></text>
+</g>
+<g >
+<title>mutex_unlock (3,999,999 samples, 0.98%)</title><rect x="611.6" y="181" width="11.5" height="15.0" fill="rgb(231,168,25)" rx="2" ry="2" />
+<text  x="614.57" y="191.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Hash_code_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::__detail::_Select1st, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, true&gt;::_M_bucket_index (1,333,333 samples, 0.33%)</title><rect x="522.9" y="325" width="3.8" height="15.0" fill="rgb(206,15,42)" rx="2" ry="2" />
+<text  x="525.88" y="335.5" ></text>
+</g>
+<g >
+<title>dump_emit (15,999,996 samples, 3.92%)</title><rect x="611.6" y="229" width="46.2" height="15.0" fill="rgb(234,65,45)" rx="2" ry="2" />
+<text  x="614.57" y="239.5" >dump..</text>
+</g>
+<g >
+<title>crypto_shash_update (1,333,333 samples, 0.33%)</title><rect x="387.9" y="437" width="3.9" height="15.0" fill="rgb(250,47,28)" rx="2" ry="2" />
+<text  x="390.91" y="447.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_default_n_1&lt;false&gt;::__uninit_default_n&lt;std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt;*, unsigned long&gt; (1,333,333 samples, 0.33%)</title><rect x="40.8" y="517" width="3.9" height="15.0" fill="rgb(207,130,6)" rx="2" ry="2" />
+<text  x="43.85" y="527.5" ></text>
+</g>
+<g >
+<title>__handle_mm_fault (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="613" width="3.9" height="15.0" fill="rgb(230,56,47)" rx="2" ry="2" />
+<text  x="1189.14" y="623.5" ></text>
+</g>
+<g >
+<title>smp_apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="29.3" y="389" width="3.8" height="15.0" fill="rgb(223,86,11)" rx="2" ry="2" />
+<text  x="32.28" y="399.5" ></text>
+</g>
+<g >
+<title>leveldb::TableBuilder::Finish (34,666,658 samples, 8.50%)</title><rect x="557.6" y="421" width="100.2" height="15.0" fill="rgb(229,56,51)" rx="2" ry="2" />
+<text  x="560.58" y="431.5" >leveldb::Tab..</text>
+</g>
+<g >
+<title>std::unordered_map&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, leveldb::MemHashTableValue*, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt; &gt;::operator[] (5,333,332 samples, 1.31%)</title><rect x="503.6" y="373" width="15.4" height="15.0" fill="rgb(214,58,10)" rx="2" ry="2" />
+<text  x="506.59" y="383.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_Base_manager&lt;std::__future_base::_State_baseV2::_Setter&lt;leveldb::Status, leveldb::Status const&amp;&gt; &gt;::_M_manager (1,333,333 samples, 0.33%)</title><rect x="1058.9" y="421" width="3.8" height="15.0" fill="rgb(210,221,22)" rx="2" ry="2" />
+<text  x="1061.89" y="431.5" ></text>
+</g>
+<g >
+<title>tlb_flush_mmu_free (1,333,333 samples, 0.33%)</title><rect x="1170.7" y="517" width="3.9" height="15.0" fill="rgb(209,103,49)" rx="2" ry="2" />
+<text  x="1173.72" y="527.5" ></text>
+</g>
+<g >
+<title>__x64_sys_openat (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="613" width="3.9" height="15.0" fill="rgb(246,144,24)" rx="2" ry="2" />
+<text  x="1166.01" y="623.5" ></text>
+</g>
+<g >
+<title>swapgs_restore_regs_and_return_to_usermode (27,999,993 samples, 6.86%)</title><rect x="576.9" y="357" width="80.9" height="15.0" fill="rgb(230,53,35)" rx="2" ry="2" />
+<text  x="579.86" y="367.5" >swapgs_re..</text>
+</g>
+<g >
+<title>get_unused_fd_flags (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="581" width="3.9" height="15.0" fill="rgb(231,214,42)" rx="2" ry="2" />
+<text  x="1166.01" y="591.5" ></text>
+</g>
+<g >
+<title>leveldb::Status::Status (1,333,333 samples, 0.33%)</title><rect x="981.8" y="389" width="3.8" height="15.0" fill="rgb(210,28,19)" rx="2" ry="2" />
+<text  x="984.76" y="399.5" ></text>
+</g>
+<g >
+<title>leveldb::log::Writer::AddRecord (25,333,327 samples, 6.21%)</title><rect x="950.9" y="469" width="73.3" height="15.0" fill="rgb(215,104,0)" rx="2" ry="2" />
+<text  x="953.92" y="479.5" >leveldb:..</text>
+</g>
+<g >
+<title>__vfs_write (11,999,997 samples, 2.94%)</title><rect x="576.9" y="213" width="34.7" height="15.0" fill="rgb(226,142,26)" rx="2" ry="2" />
+<text  x="579.86" y="223.5" >__..</text>
+</g>
+<g >
+<title>leveldb::Slice::size (1,333,333 samples, 0.33%)</title><rect x="1124.4" y="485" width="3.9" height="15.0" fill="rgb(229,7,23)" rx="2" ry="2" />
+<text  x="1127.44" y="495.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::PosixWritableFile::Append (3,999,999 samples, 0.98%)</title><rect x="958.6" y="437" width="11.6" height="15.0" fill="rgb(220,18,15)" rx="2" ry="2" />
+<text  x="961.63" y="447.5" ></text>
+</g>
+<g >
+<title>blkdev_issue_zeroout (1,333,333 samples, 0.33%)</title><rect x="569.2" y="165" width="3.8" height="15.0" fill="rgb(206,157,33)" rx="2" ry="2" />
+<text  x="572.15" y="175.5" ></text>
+</g>
+<g >
+<title>vprintk_func (1,333,333 samples, 0.33%)</title><rect x="573.0" y="245" width="3.9" height="15.0" fill="rgb(219,37,28)" rx="2" ry="2" />
+<text  x="576.01" y="255.5" ></text>
+</g>
+<g >
+<title>smp_apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="418.8" y="501" width="3.8" height="15.0" fill="rgb(242,82,20)" rx="2" ry="2" />
+<text  x="421.76" y="511.5" ></text>
+</g>
+<g >
+<title>std::__atomic_base&lt;unsigned int&gt;::__atomic_base (1,333,333 samples, 0.33%)</title><rect x="1097.5" y="309" width="3.8" height="15.0" fill="rgb(239,89,48)" rx="2" ry="2" />
+<text  x="1100.45" y="319.5" ></text>
+</g>
+<g >
+<title>path_openat (1,333,333 samples, 0.33%)</title><rect x="33.1" y="469" width="3.9" height="15.0" fill="rgb(253,217,49)" rx="2" ry="2" />
+<text  x="36.14" y="479.5" ></text>
+</g>
+<g >
+<title>bad_area (1,333,333 samples, 0.33%)</title><rect x="573.0" y="309" width="3.9" height="15.0" fill="rgb(218,104,21)" rx="2" ry="2" />
+<text  x="576.01" y="319.5" ></text>
+</g>
+<g >
+<title>dax_read_unlock (86,666,645 samples, 21.24%)</title><rect x="67.8" y="501" width="250.7" height="15.0" fill="rgb(246,114,32)" rx="2" ry="2" />
+<text  x="70.84" y="511.5" >dax_read_unlock</text>
+</g>
+<g >
+<title>std::__future_base::_Result&lt;leveldb::Status&gt;::_M_destroy (1,333,333 samples, 0.33%)</title><rect x="1105.2" y="309" width="3.8" height="15.0" fill="rgb(238,188,38)" rx="2" ry="2" />
+<text  x="1108.16" y="319.5" ></text>
+</g>
+<g >
+<title>std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;::operator (1,333,333 samples, 0.33%)</title><rect x="526.7" y="325" width="3.9" height="15.0" fill="rgb(248,23,27)" rx="2" ry="2" />
+<text  x="529.73" y="335.5" ></text>
+</g>
+<g >
+<title>swake_up (1,333,333 samples, 0.33%)</title><rect x="418.8" y="405" width="3.8" height="15.0" fill="rgb(236,79,31)" rx="2" ry="2" />
+<text  x="421.76" y="415.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (119,999,970 samples, 29.41%)</title><rect x="48.6" y="661" width="347.0" height="15.0" fill="rgb(222,85,22)" rx="2" ry="2" />
+<text  x="51.56" y="671.5" >entry_SYSCALL_64_after_hwframe</text>
+</g>
+<g >
+<title>_IO_default_xsputn (1,333,333 samples, 0.33%)</title><rect x="10.0" y="677" width="3.9" height="15.0" fill="rgb(228,62,1)" rx="2" ry="2" />
+<text  x="13.00" y="687.5" ></text>
+</g>
+<g >
+<title>mutex_spin_on_owner (3,999,999 samples, 0.98%)</title><rect x="646.3" y="117" width="11.5" height="15.0" fill="rgb(242,150,47)" rx="2" ry="2" />
+<text  x="649.27" y="127.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Hash_code_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::__detail::_Select1st, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, true&gt;::_M_bucket_index (1,333,333 samples, 0.33%)</title><rect x="503.6" y="293" width="3.9" height="15.0" fill="rgb(243,60,26)" rx="2" ry="2" />
+<text  x="506.59" y="303.5" ></text>
+</g>
+<g >
+<title>tcmalloc::CentralFreeList::Populate (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="677" width="3.8" height="15.0" fill="rgb(247,10,37)" rx="2" ry="2" />
+<text  x="1142.87" y="687.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::Slice (1,333,333 samples, 0.33%)</title><rect x="947.1" y="437" width="3.8" height="15.0" fill="rgb(225,163,52)" rx="2" ry="2" />
+<text  x="950.06" y="447.5" ></text>
+</g>
+<g >
+<title>leveldb::TableBuilder::Flush (18,666,662 samples, 4.58%)</title><rect x="495.9" y="405" width="54.0" height="15.0" fill="rgb(248,150,35)" rx="2" ry="2" />
+<text  x="498.88" y="415.5" >level..</text>
+</g>
+<g >
+<title>__handle_mm_fault (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="597" width="3.8" height="15.0" fill="rgb(251,20,52)" rx="2" ry="2" />
+<text  x="1142.87" y="607.5" ></text>
+</g>
+<g >
+<title>std::allocate_shared&lt;std::__future_base::_State_baseV2, std::allocator&lt;std::__future_base::_State_baseV2&gt;&gt; (9,333,331 samples, 2.29%)</title><rect x="1074.3" y="453" width="27.0" height="15.0" fill="rgb(239,176,21)" rx="2" ry="2" />
+<text  x="1077.31" y="463.5" >s..</text>
+</g>
+<g >
+<title>std::__atomic_futex_unsigned&lt;2147483648u&gt;::__atomic_futex_unsigned (1,333,333 samples, 0.33%)</title><rect x="1085.9" y="341" width="3.8" height="15.0" fill="rgb(244,21,20)" rx="2" ry="2" />
+<text  x="1088.88" y="351.5" ></text>
+</g>
+<g >
+<title>do_unlinkat (1,333,333 samples, 0.33%)</title><rect x="29.3" y="549" width="3.8" height="15.0" fill="rgb(232,57,10)" rx="2" ry="2" />
+<text  x="32.28" y="559.5" ></text>
+</g>
+<g >
+<title>std::_Deque_base&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt;::_M_initialize_map (1,333,333 samples, 0.33%)</title><rect x="40.8" y="437" width="3.9" height="15.0" fill="rgb(232,73,32)" rx="2" ry="2" />
+<text  x="43.85" y="447.5" ></text>
+</g>
+<g >
+<title>std::_Deque_iterator&lt;leveldb::DBImpl::Writer*, leveldb::DBImpl::Writer*&amp;, leveldb::DBImpl::Writer**&gt;::_Deque_iterator (2,666,666 samples, 0.65%)</title><rect x="723.4" y="437" width="7.7" height="15.0" fill="rgb(211,192,40)" rx="2" ry="2" />
+<text  x="726.40" y="447.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::BackgroundCall (75,999,981 samples, 18.63%)</title><rect x="453.5" y="501" width="219.8" height="15.0" fill="rgb(207,202,21)" rx="2" ry="2" />
+<text  x="456.46" y="511.5" >leveldb::DBImpl::BackgroundCall</text>
+</g>
+<g >
+<title>leveldb::MemTable::KeyComparator::operator (1,333,333 samples, 0.33%)</title><rect x="765.8" y="373" width="3.9" height="15.0" fill="rgb(243,128,25)" rx="2" ry="2" />
+<text  x="768.82" y="383.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::operator!=&lt;leveldb::ParsedInternalKey*, std::vector&lt;leveldb::ParsedInternalKey, std::allocator&lt;leveldb::ParsedInternalKey&gt; &gt; &gt; (1,333,333 samples, 0.33%)</title><rect x="495.9" y="389" width="3.8" height="15.0" fill="rgb(233,104,37)" rx="2" ry="2" />
+<text  x="498.88" y="399.5" ></text>
+</g>
+<g >
+<title>jbd2_journal_stop (1,333,333 samples, 0.33%)</title><rect x="326.2" y="485" width="3.9" height="15.0" fill="rgb(246,43,41)" rx="2" ry="2" />
+<text  x="329.21" y="495.5" ></text>
+</g>
+<g >
+<title>mutex_lock (5,333,332 samples, 1.31%)</title><rect x="642.4" y="165" width="15.4" height="15.0" fill="rgb(212,33,5)" rx="2" ry="2" />
+<text  x="645.42" y="175.5" ></text>
+</g>
+<g >
+<title>__do_softirq (1,333,333 samples, 0.33%)</title><rect x="52.4" y="533" width="3.9" height="15.0" fill="rgb(221,195,36)" rx="2" ry="2" />
+<text  x="55.42" y="543.5" ></text>
+</g>
+<g >
+<title>__sb_end_write (1,333,333 samples, 0.33%)</title><rect x="576.9" y="197" width="3.8" height="15.0" fill="rgb(216,176,17)" rx="2" ry="2" />
+<text  x="579.86" y="207.5" ></text>
+</g>
+<g >
+<title>leveldb::EncodeFixed64 (1,333,333 samples, 0.33%)</title><rect x="735.0" y="469" width="3.8" height="15.0" fill="rgb(221,214,36)" rx="2" ry="2" />
+<text  x="737.97" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::SkipList&lt;char const*, leveldb::MemTable::KeyComparator&gt;::Insert (70,666,649 samples, 17.32%)</title><rect x="742.7" y="405" width="204.4" height="15.0" fill="rgb(212,68,50)" rx="2" ry="2" />
+<text  x="745.68" y="415.5" >leveldb::SkipList&lt;char con..</text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;std::__future_base::_State_baseV2,  (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="453" width="7.7" height="15.0" fill="rgb(219,16,13)" rx="2" ry="2" />
+<text  x="1108.16" y="463.5" ></text>
+</g>
+<g >
+<title>__ext4_get_inode_loc (1,333,333 samples, 0.33%)</title><rect x="33.1" y="373" width="3.9" height="15.0" fill="rgb(207,27,38)" rx="2" ry="2" />
+<text  x="36.14" y="383.5" ></text>
+</g>
+<g >
+<title>do_page_fault (1,333,333 samples, 0.33%)</title><rect x="1182.3" y="661" width="3.8" height="15.0" fill="rgb(236,195,41)" rx="2" ry="2" />
+<text  x="1185.29" y="671.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;leveldb::ParsedInternalKey*, std::vector&lt;leveldb::ParsedInternalKey, std::allocator&lt;leveldb::ParsedInternalKey&gt; &gt; &gt;::base (1,333,333 samples, 0.33%)</title><rect x="495.9" y="373" width="3.8" height="15.0" fill="rgb(254,106,2)" rx="2" ry="2" />
+<text  x="498.88" y="383.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (1,333,333 samples, 0.33%)</title><rect x="1120.6" y="485" width="3.8" height="15.0" fill="rgb(219,106,51)" rx="2" ry="2" />
+<text  x="1123.59" y="495.5" ></text>
+</g>
+<g >
+<title>snappy::internal::CompressFragment (5,333,332 samples, 1.31%)</title><rect x="438.0" y="677" width="15.5" height="15.0" fill="rgb(243,168,19)" rx="2" ry="2" />
+<text  x="441.04" y="687.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Map_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt;, true&gt;::operator[] (2,666,666 samples, 0.65%)</title><rect x="522.9" y="357" width="7.7" height="15.0" fill="rgb(237,27,29)" rx="2" ry="2" />
+<text  x="525.88" y="367.5" ></text>
+</g>
+<g >
+<title>_dl_map_object (1,333,333 samples, 0.33%)</title><rect x="1163.0" y="693" width="3.9" height="15.0" fill="rgb(210,13,3)" rx="2" ry="2" />
+<text  x="1166.01" y="703.5" ></text>
+</g>
+<g >
+<title>flush_clwb (29,333,326 samples, 7.19%)</title><rect x="573.0" y="373" width="84.8" height="15.0" fill="rgb(235,158,53)" rx="2" ry="2" />
+<text  x="576.01" y="383.5" >flush_clwb</text>
+</g>
+<g >
+<title>tcmalloc::CentralFreeList::Init (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="693" width="3.9" height="15.0" fill="rgb(218,108,13)" rx="2" ry="2" />
+<text  x="1189.14" y="703.5" ></text>
+</g>
+<g >
+<title>ext4_sync_file (3,999,999 samples, 0.98%)</title><rect x="557.6" y="197" width="11.6" height="15.0" fill="rgb(208,109,11)" rx="2" ry="2" />
+<text  x="560.58" y="207.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;leveldb::FileMetaData*, std::allocator&lt;leveldb::FileMetaData*&gt; &gt;::size (1,333,333 samples, 0.33%)</title><rect x="731.1" y="437" width="3.9" height="15.0" fill="rgb(205,9,3)" rx="2" ry="2" />
+<text  x="734.11" y="447.5" ></text>
+</g>
+<g >
+<title>irq_exit (1,333,333 samples, 0.33%)</title><rect x="29.3" y="373" width="3.8" height="15.0" fill="rgb(244,85,47)" rx="2" ry="2" />
+<text  x="32.28" y="383.5" ></text>
+</g>
+<g >
+<title>leveldb::TableBuilder::Add (31,999,992 samples, 7.84%)</title><rect x="465.0" y="421" width="92.6" height="15.0" fill="rgb(238,69,11)" rx="2" ry="2" />
+<text  x="468.03" y="431.5" >leveldb::Ta..</text>
+</g>
+<g >
+<title>apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="52.4" y="581" width="3.9" height="15.0" fill="rgb(206,110,13)" rx="2" ry="2" />
+<text  x="55.42" y="591.5" ></text>
+</g>
+<g >
+<title>leveldb::Benchmark::WriteRandom (158,666,627 samples, 38.89%)</title><rect x="673.3" y="533" width="458.9" height="15.0" fill="rgb(229,195,20)" rx="2" ry="2" />
+<text  x="676.27" y="543.5" >leveldb::Benchmark::WriteRandom</text>
+</g>
+<g >
+<title>_raw_read_lock (2,666,666 samples, 0.65%)</title><rect x="349.3" y="453" width="7.8" height="15.0" fill="rgb(248,2,6)" rx="2" ry="2" />
+<text  x="352.35" y="463.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_bucket_index (1,333,333 samples, 0.33%)</title><rect x="503.6" y="309" width="3.9" height="15.0" fill="rgb(223,205,2)" rx="2" ry="2" />
+<text  x="506.59" y="319.5" ></text>
+</g>
+<g >
+<title>show_cpuinfo (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="549" width="3.9" height="15.0" fill="rgb(214,137,21)" rx="2" ry="2" />
+<text  x="1181.43" y="559.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::PosixEnv::PosixEnv (1,333,333 samples, 0.33%)</title><rect x="40.8" y="597" width="3.9" height="15.0" fill="rgb(247,13,23)" rx="2" ry="2" />
+<text  x="43.85" y="607.5" ></text>
+</g>
+<g >
+<title>leveldb::MemHashTable::setValue (3,999,999 samples, 0.98%)</title><rect x="519.0" y="389" width="11.6" height="15.0" fill="rgb(253,122,32)" rx="2" ry="2" />
+<text  x="522.02" y="399.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;std::__future_base::_State_baseV2,  (9,333,331 samples, 2.29%)</title><rect x="1074.3" y="421" width="27.0" height="15.0" fill="rgb(243,31,8)" rx="2" ry="2" />
+<text  x="1077.31" y="431.5" >s..</text>
+</g>
+<g >
+<title>__next_zones_zonelist (1,333,333 samples, 0.33%)</title><rect x="1139.9" y="549" width="3.8" height="15.0" fill="rgb(217,6,16)" rx="2" ry="2" />
+<text  x="1142.87" y="559.5" ></text>
+</g>
+<g >
+<title>do_sys_open (1,333,333 samples, 0.33%)</title><rect x="33.1" y="501" width="3.9" height="15.0" fill="rgb(231,152,31)" rx="2" ry="2" />
+<text  x="36.14" y="511.5" ></text>
+</g>
+<g >
+<title>start_this_handle (3,999,999 samples, 0.98%)</title><rect x="345.5" y="469" width="11.6" height="15.0" fill="rgb(254,217,10)" rx="2" ry="2" />
+<text  x="348.49" y="479.5" ></text>
+</g>
+<g >
+<title>get_page_from_freelist (2,666,666 samples, 0.65%)</title><rect x="627.0" y="133" width="7.7" height="15.0" fill="rgb(235,183,50)" rx="2" ry="2" />
+<text  x="629.99" y="143.5" ></text>
+</g>
+<g >
+<title>leveldb::Random::Next (2,666,666 samples, 0.65%)</title><rect x="704.1" y="437" width="7.7" height="15.0" fill="rgb(206,212,2)" rx="2" ry="2" />
+<text  x="707.12" y="447.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (2,666,666 samples, 0.65%)</title><rect x="399.5" y="645" width="7.7" height="15.0" fill="rgb(225,13,23)" rx="2" ry="2" />
+<text  x="402.48" y="655.5" ></text>
+</g>
+<g >
+<title>std::_Head_base&lt;1ul, std::__future_base::_Result_base::_Deleter, true&gt;::_Head_base&lt;std::__future_base::_Result_base::_Deleter&gt; (1,333,333 samples, 0.33%)</title><rect x="426.5" y="437" width="3.8" height="15.0" fill="rgb(231,189,12)" rx="2" ry="2" />
+<text  x="429.47" y="447.5" ></text>
+</g>
+<g >
+<title>ext4_mark_iloc_dirty (1,333,333 samples, 0.33%)</title><rect x="387.9" y="485" width="3.9" height="15.0" fill="rgb(226,144,32)" rx="2" ry="2" />
+<text  x="390.91" y="495.5" ></text>
+</g>
+<g >
+<title>irq_exit (1,333,333 samples, 0.33%)</title><rect x="1143.7" y="645" width="3.9" height="15.0" fill="rgb(231,126,4)" rx="2" ry="2" />
+<text  x="1146.73" y="655.5" ></text>
+</g>
+<g >
+<title>rcu_process_callbacks (1,333,333 samples, 0.33%)</title><rect x="1143.7" y="613" width="3.9" height="15.0" fill="rgb(233,80,53)" rx="2" ry="2" />
+<text  x="1146.73" y="623.5" ></text>
+</g>
+<g >
+<title>__ext4_journal_stop (1,333,333 samples, 0.33%)</title><rect x="357.1" y="501" width="3.8" height="15.0" fill="rgb(235,172,7)" rx="2" ry="2" />
+<text  x="360.06" y="511.5" ></text>
+</g>
+<g >
+<title>std::__atomic_futex_unsigned&lt;2147483648u&gt;::__atomic_futex_unsigned (1,333,333 samples, 0.33%)</title><rect x="1097.5" y="325" width="3.8" height="15.0" fill="rgb(225,37,54)" rx="2" ry="2" />
+<text  x="1100.45" y="335.5" ></text>
+</g>
+<g >
+<title>memcpy_erms (5,333,332 samples, 1.31%)</title><rect x="588.4" y="165" width="15.5" height="15.0" fill="rgb(205,213,26)" rx="2" ry="2" />
+<text  x="591.43" y="175.5" ></text>
+</g>
+<g >
+<title>__wake_up_common_lock (2,666,666 samples, 0.65%)</title><rect x="561.4" y="133" width="7.8" height="15.0" fill="rgb(234,151,31)" rx="2" ry="2" />
+<text  x="564.44" y="143.5" ></text>
+</g>
+<g >
+<title>prepare_exit_to_usermode (27,999,993 samples, 6.86%)</title><rect x="576.9" y="341" width="80.9" height="15.0" fill="rgb(251,225,35)" rx="2" ry="2" />
+<text  x="579.86" y="351.5" >prepare_e..</text>
+</g>
+<g >
+<title>_dl_lookup_symbol_x (1,333,333 samples, 0.33%)</title><rect x="1159.2" y="693" width="3.8" height="15.0" fill="rgb(211,71,11)" rx="2" ry="2" />
+<text  x="1162.15" y="703.5" ></text>
+</g>
+<g >
+<title>std::deque&lt;leveldb::DBImpl::Writer*, std::allocator&lt;leveldb::DBImpl::Writer*&gt; &gt;::push_back (2,666,666 samples, 0.65%)</title><rect x="1035.8" y="469" width="7.7" height="15.0" fill="rgb(212,157,11)" rx="2" ry="2" />
+<text  x="1038.75" y="479.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_default_n&lt;char*, unsigned long&gt; (5,333,332 samples, 1.31%)</title><rect x="657.8" y="341" width="15.5" height="15.0" fill="rgb(232,156,41)" rx="2" ry="2" />
+<text  x="660.84" y="351.5" ></text>
+</g>
+<g >
+<title>generic_make_request (1,333,333 samples, 0.33%)</title><rect x="569.2" y="117" width="3.8" height="15.0" fill="rgb(246,24,53)" rx="2" ry="2" />
+<text  x="572.15" y="127.5" ></text>
+</g>
+<g >
+<title>blkdev_issue_zeroout (1,333,333 samples, 0.33%)</title><rect x="337.8" y="469" width="3.8" height="15.0" fill="rgb(221,158,46)" rx="2" ry="2" />
+<text  x="340.78" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::(anonymous namespace)::SingletonEnv&lt;leveldb::(anonymous namespace)::PosixEnv&gt;::SingletonEnv (1,333,333 samples, 0.33%)</title><rect x="40.8" y="613" width="3.9" height="15.0" fill="rgb(251,28,53)" rx="2" ry="2" />
+<text  x="43.85" y="623.5" ></text>
+</g>
+<g >
+<title>leveldb::SkipList&lt;char const*, leveldb::MemTable::KeyComparator&gt;::RandomHeight (1,333,333 samples, 0.33%)</title><rect x="943.2" y="389" width="3.9" height="15.0" fill="rgb(239,55,34)" rx="2" ry="2" />
+<text  x="946.20" y="399.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::BGWork (75,999,981 samples, 18.63%)</title><rect x="453.5" y="517" width="219.8" height="15.0" fill="rgb(205,5,35)" rx="2" ry="2" />
+<text  x="456.46" y="527.5" >leveldb::DBImpl::BGWork</text>
+</g>
+<g >
+<title>irq_exit (1,333,333 samples, 0.33%)</title><rect x="869.9" y="277" width="3.9" height="15.0" fill="rgb(254,58,45)" rx="2" ry="2" />
+<text  x="872.93" y="287.5" ></text>
+</g>
+<g >
+<title>__do_page_fault (1,333,333 samples, 0.33%)</title><rect x="1182.3" y="645" width="3.8" height="15.0" fill="rgb(251,171,13)" rx="2" ry="2" />
+<text  x="1185.29" y="655.5" ></text>
+</g>
+<g >
+<title>std::__future_base::_State_baseV2::_M_do_set (9,333,331 samples, 2.29%)</title><rect x="407.2" y="581" width="27.0" height="15.0" fill="rgb(221,90,32)" rx="2" ry="2" />
+<text  x="410.19" y="591.5" >s..</text>
+</g>
+<g >
+<title>do_syscall_64 (1,333,333 samples, 0.33%)</title><rect x="37.0" y="549" width="3.8" height="15.0" fill="rgb(232,141,53)" rx="2" ry="2" />
+<text  x="39.99" y="559.5" ></text>
+</g>
+<g >
+<title>pmem_make_request (1,333,333 samples, 0.33%)</title><rect x="569.2" y="101" width="3.8" height="15.0" fill="rgb(240,229,0)" rx="2" ry="2" />
+<text  x="572.15" y="111.5" ></text>
+</g>
+<g >
+<title>copy_page_from_iter (2,666,666 samples, 0.65%)</title><rect x="634.7" y="165" width="7.7" height="15.0" fill="rgb(209,138,23)" rx="2" ry="2" />
+<text  x="637.71" y="175.5" ></text>
+</g>
+<g >
+<title>__mutex_lock.isra.4 (3,999,999 samples, 0.98%)</title><rect x="646.3" y="133" width="11.5" height="15.0" fill="rgb(208,10,16)" rx="2" ry="2" />
+<text  x="649.27" y="143.5" ></text>
+</g>
+<g >
+<title>handle_mm_fault (1,333,333 samples, 0.33%)</title><rect x="669.4" y="213" width="3.9" height="15.0" fill="rgb(229,35,6)" rx="2" ry="2" />
+<text  x="672.41" y="223.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_default_n_a&lt;char*, unsigned long, char&gt; (5,333,332 samples, 1.31%)</title><rect x="657.8" y="357" width="15.5" height="15.0" fill="rgb(236,223,13)" rx="2" ry="2" />
+<text  x="660.84" y="367.5" ></text>
+</g>
+<g >
+<title>__jbd2_log_start_commit (2,666,666 samples, 0.65%)</title><rect x="561.4" y="165" width="7.8" height="15.0" fill="rgb(215,40,1)" rx="2" ry="2" />
+<text  x="564.44" y="175.5" ></text>
+</g>
+<g >
+<title>all (407,999,898 samples, 100%)</title><rect x="10.0" y="725" width="1180.0" height="15.0" fill="rgb(221,38,41)" rx="2" ry="2" />
+<text  x="13.00" y="735.5" ></text>
+</g>
+<g >
+<title>read (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="693" width="3.9" height="15.0" fill="rgb(212,204,15)" rx="2" ry="2" />
+<text  x="1181.43" y="703.5" ></text>
+</g>
+<g >
+<title>std::tuple&lt;std::__future_base::_Result&lt;leveldb::Status&gt;*, std::__future_base::_Result_base::_Deleter&gt;::tuple&lt;std::__future_base::_Result&lt;leveldb::Status&gt;*&amp;, std::__future_base::_Result_base::_Deleter, true&gt; (2,666,666 samples, 0.65%)</title><rect x="422.6" y="485" width="7.7" height="15.0" fill="rgb(221,99,22)" rx="2" ry="2" />
+<text  x="425.61" y="495.5" ></text>
+</g>
+<g >
+<title>ext4_dax_fault (5,333,332 samples, 1.31%)</title><rect x="557.6" y="261" width="15.4" height="15.0" fill="rgb(229,74,24)" rx="2" ry="2" />
+<text  x="560.58" y="271.5" ></text>
+</g>
+<g >
+<title>jbd2_complete_transaction (2,666,666 samples, 0.65%)</title><rect x="561.4" y="181" width="7.8" height="15.0" fill="rgb(216,85,30)" rx="2" ry="2" />
+<text  x="564.44" y="191.5" ></text>
+</g>
+<g >
+<title>do_filp_open (2,666,666 samples, 0.65%)</title><rect x="21.6" y="597" width="7.7" height="15.0" fill="rgb(221,46,38)" rx="2" ry="2" />
+<text  x="24.57" y="607.5" ></text>
+</g>
+<g >
+<title>smp_call_function_single (2,666,666 samples, 0.65%)</title><rect x="21.6" y="469" width="7.7" height="15.0" fill="rgb(216,82,53)" rx="2" ry="2" />
+<text  x="24.57" y="479.5" ></text>
+</g>
+<g >
+<title>leveldb::Random::Uniform (9,333,331 samples, 2.29%)</title><rect x="684.8" y="453" width="27.0" height="15.0" fill="rgb(243,217,11)" rx="2" ry="2" />
+<text  x="687.84" y="463.5" >l..</text>
+</g>
+<g >
+<title>std::__future_base::_Result&lt;leveldb::Status&gt;::~_Result (1,333,333 samples, 0.33%)</title><rect x="1105.2" y="293" width="3.8" height="15.0" fill="rgb(253,199,15)" rx="2" ry="2" />
+<text  x="1108.16" y="303.5" ></text>
+</g>
+<g >
+<title>__wake_up_common_lock (1,333,333 samples, 0.33%)</title><rect x="357.1" y="453" width="3.8" height="15.0" fill="rgb(253,162,7)" rx="2" ry="2" />
+<text  x="360.06" y="463.5" ></text>
+</g>
+<g >
+<title>leveldb::TableBuilder::Rep::Rep (5,333,332 samples, 1.31%)</title><rect x="657.8" y="405" width="15.5" height="15.0" fill="rgb(249,97,27)" rx="2" ry="2" />
+<text  x="660.84" y="415.5" ></text>
+</g>
+<g >
+<title>__dax_invalidate_mapping_entry (1,333,333 samples, 0.33%)</title><rect x="29.3" y="421" width="3.8" height="15.0" fill="rgb(253,136,23)" rx="2" ry="2" />
+<text  x="32.28" y="431.5" ></text>
+</g>
+<g >
+<title>filemap_map_pages (1,333,333 samples, 0.33%)</title><rect x="1182.3" y="597" width="3.8" height="15.0" fill="rgb(240,48,41)" rx="2" ry="2" />
+<text  x="1185.29" y="607.5" ></text>
+</g>
+<g >
+<title>leveldb::DB::Open (1,333,333 samples, 0.33%)</title><rect x="33.1" y="613" width="3.9" height="15.0" fill="rgb(225,48,53)" rx="2" ry="2" />
+<text  x="36.14" y="623.5" ></text>
+</g>
+<g >
+<title>__do_page_fault (3,999,999 samples, 0.98%)</title><rect x="661.7" y="229" width="11.6" height="15.0" fill="rgb(237,190,34)" rx="2" ry="2" />
+<text  x="664.70" y="239.5" ></text>
+</g>
+<g >
+<title>ext4_dax_huge_fault (5,333,332 samples, 1.31%)</title><rect x="557.6" y="245" width="15.4" height="15.0" fill="rgb(236,33,32)" rx="2" ry="2" />
+<text  x="560.58" y="255.5" ></text>
+</g>
+<g >
+<title>ext4_evict_inode (1,333,333 samples, 0.33%)</title><rect x="29.3" y="501" width="3.8" height="15.0" fill="rgb(229,61,19)" rx="2" ry="2" />
+<text  x="32.28" y="511.5" ></text>
+</g>
+<g >
+<title>std::thread::_Invoker&lt;std::tuple&lt;void  (234,666,608 samples, 57.52%)</title><rect x="453.5" y="597" width="678.7" height="15.0" fill="rgb(226,206,53)" rx="2" ry="2" />
+<text  x="456.46" y="607.5" >std::thread::_Invoker&lt;std::tuple&lt;void </text>
+</g>
+<g >
+<title>aperfmperf_snapshot_cpu (2,666,666 samples, 0.65%)</title><rect x="21.6" y="485" width="7.7" height="15.0" fill="rgb(207,77,26)" rx="2" ry="2" />
+<text  x="24.57" y="495.5" ></text>
+</g>
+<g >
+<title>leveldb::ParseInternalKey (3,999,999 samples, 0.98%)</title><rect x="484.3" y="405" width="11.6" height="15.0" fill="rgb(242,146,11)" rx="2" ry="2" />
+<text  x="487.31" y="415.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::resize (1,333,333 samples, 0.33%)</title><rect x="549.9" y="405" width="3.8" height="15.0" fill="rgb(236,31,39)" rx="2" ry="2" />
+<text  x="552.87" y="415.5" ></text>
+</g>
+<g >
+<title>ext4_journal_check_start (1,333,333 samples, 0.33%)</title><rect x="341.6" y="485" width="3.9" height="15.0" fill="rgb(225,194,27)" rx="2" ry="2" />
+<text  x="344.63" y="495.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::operator[] (1,333,333 samples, 0.33%)</title><rect x="711.8" y="469" width="3.9" height="15.0" fill="rgb(220,178,17)" rx="2" ry="2" />
+<text  x="714.83" y="479.5" ></text>
+</g>
+<g >
+<title>elf_core_dump (27,999,993 samples, 6.86%)</title><rect x="576.9" y="261" width="80.9" height="15.0" fill="rgb(250,24,30)" rx="2" ry="2" />
+<text  x="579.86" y="271.5" >elf_core_..</text>
+</g>
+<g >
+<title>leveldb::GetLengthPrefixedSlice (19,999,995 samples, 4.90%)</title><rect x="819.8" y="341" width="57.8" height="15.0" fill="rgb(248,32,46)" rx="2" ry="2" />
+<text  x="822.80" y="351.5" >leveld..</text>
+</g>
+<g >
+<title>do_signal (27,999,993 samples, 6.86%)</title><rect x="576.9" y="309" width="80.9" height="15.0" fill="rgb(216,206,24)" rx="2" ry="2" />
+<text  x="579.86" y="319.5" >do_signal</text>
+</g>
+<g >
+<title>leveldb::DBImpl::BuildBatchGroup (2,666,666 samples, 0.65%)</title><rect x="723.4" y="469" width="7.7" height="15.0" fill="rgb(220,19,8)" rx="2" ry="2" />
+<text  x="726.40" y="479.5" ></text>
+</g>
+<g >
+<title>vfs_write (117,333,304 samples, 28.76%)</title><rect x="56.3" y="597" width="339.3" height="15.0" fill="rgb(237,208,41)" rx="2" ry="2" />
+<text  x="59.27" y="607.5" >vfs_write</text>
+</g>
+<g >
+<title>leveldb::port::Mutex::Lock (1,333,333 samples, 0.33%)</title><rect x="1024.2" y="469" width="3.8" height="15.0" fill="rgb(247,77,8)" rx="2" ry="2" />
+<text  x="1027.18" y="479.5" ></text>
+</g>
+<g >
+<title>bio_endio (1,333,333 samples, 0.33%)</title><rect x="569.2" y="85" width="3.8" height="15.0" fill="rgb(234,46,48)" rx="2" ry="2" />
+<text  x="572.15" y="95.5" ></text>
+</g>
+<g >
+<title>leveldb::DecodeFixed32 (1,333,333 samples, 0.33%)</title><rect x="997.2" y="421" width="3.8" height="15.0" fill="rgb(241,30,26)" rx="2" ry="2" />
+<text  x="1000.19" y="431.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::NewDB (1,333,333 samples, 0.33%)</title><rect x="33.1" y="581" width="3.9" height="15.0" fill="rgb(213,17,16)" rx="2" ry="2" />
+<text  x="36.14" y="591.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_Base_manager&lt;std::__future_base::_State_baseV2::_Setter&lt;leveldb::Status, leveldb::Status const&amp;&gt; &gt;::_M_destroy (1,333,333 samples, 0.33%)</title><rect x="1058.9" y="405" width="3.8" height="15.0" fill="rgb(250,27,51)" rx="2" ry="2" />
+<text  x="1061.89" y="415.5" ></text>
+</g>
+<g >
+<title>arch_tlb_finish_mmu (1,333,333 samples, 0.33%)</title><rect x="1170.7" y="533" width="3.9" height="15.0" fill="rgb(223,87,52)" rx="2" ry="2" />
+<text  x="1173.72" y="543.5" ></text>
+</g>
+<g >
+<title>tlb_finish_mmu (1,333,333 samples, 0.33%)</title><rect x="1170.7" y="549" width="3.9" height="15.0" fill="rgb(207,180,31)" rx="2" ry="2" />
+<text  x="1173.72" y="559.5" ></text>
+</g>
+<g >
+<title>ext4_create (1,333,333 samples, 0.33%)</title><rect x="33.1" y="453" width="3.9" height="15.0" fill="rgb(226,195,51)" rx="2" ry="2" />
+<text  x="36.14" y="463.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;char, std::allocator&lt;char&gt; &gt;::resize (5,333,332 samples, 1.31%)</title><rect x="657.8" y="389" width="15.5" height="15.0" fill="rgb(222,195,29)" rx="2" ry="2" />
+<text  x="660.84" y="399.5" ></text>
+</g>
+<g >
+<title>page_fault (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="677" width="3.9" height="15.0" fill="rgb(226,165,9)" rx="2" ry="2" />
+<text  x="1189.14" y="687.5" ></text>
+</g>
+<g >
+<title>truncate_exceptional_pvec_entries.part.13 (1,333,333 samples, 0.33%)</title><rect x="29.3" y="453" width="3.8" height="15.0" fill="rgb(235,144,12)" rx="2" ry="2" />
+<text  x="32.28" y="463.5" ></text>
+</g>
+<g >
+<title>std::function&lt;std::unique_ptr&lt;std::__future_base::_Result_base, std::__future_base::_Result_base::_Deleter&gt;  (9,333,331 samples, 2.29%)</title><rect x="407.2" y="565" width="27.0" height="15.0" fill="rgb(246,50,0)" rx="2" ry="2" />
+<text  x="410.19" y="575.5" >s..</text>
+</g>
+<g >
+<title>leveldb::Slice::Slice (1,333,333 samples, 0.33%)</title><rect x="673.3" y="485" width="3.8" height="15.0" fill="rgb(210,172,14)" rx="2" ry="2" />
+<text  x="676.27" y="495.5" ></text>
+</g>
+<g >
+<title>ksys_write (119,999,970 samples, 29.41%)</title><rect x="48.6" y="613" width="347.0" height="15.0" fill="rgb(225,195,16)" rx="2" ry="2" />
+<text  x="51.56" y="623.5" >ksys_write</text>
+</g>
+<g >
+<title>std::_Construct&lt;std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt;&gt; (1,333,333 samples, 0.33%)</title><rect x="40.8" y="501" width="3.9" height="15.0" fill="rgb(252,194,35)" rx="2" ry="2" />
+<text  x="43.85" y="511.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (2,666,666 samples, 0.65%)</title><rect x="1105.2" y="421" width="7.7" height="15.0" fill="rgb(226,63,53)" rx="2" ry="2" />
+<text  x="1108.16" y="431.5" ></text>
+</g>
+<g >
+<title>page_fault (1,333,333 samples, 0.33%)</title><rect x="1182.3" y="677" width="3.8" height="15.0" fill="rgb(214,61,20)" rx="2" ry="2" />
+<text  x="1185.29" y="687.5" ></text>
+</g>
+<g >
+<title>smp_apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="1143.7" y="661" width="3.9" height="15.0" fill="rgb(235,7,44)" rx="2" ry="2" />
+<text  x="1146.73" y="671.5" ></text>
+</g>
+<g >
+<title>leveldb::Benchmark::Open (1,333,333 samples, 0.33%)</title><rect x="33.1" y="629" width="3.9" height="15.0" fill="rgb(207,206,44)" rx="2" ry="2" />
+<text  x="36.14" y="639.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (1,333,333 samples, 0.33%)</title><rect x="29.3" y="581" width="3.8" height="15.0" fill="rgb(251,26,29)" rx="2" ry="2" />
+<text  x="32.28" y="591.5" ></text>
+</g>
+<g >
+<title>__x64_sys_read (1,333,333 samples, 0.33%)</title><rect x="1178.4" y="645" width="3.9" height="15.0" fill="rgb(219,16,13)" rx="2" ry="2" />
+<text  x="1181.43" y="655.5" ></text>
+</g>
+<g >
+<title>leveldb::Env::Default (1,333,333 samples, 0.33%)</title><rect x="40.8" y="629" width="3.9" height="15.0" fill="rgb(244,158,14)" rx="2" ry="2" />
+<text  x="43.85" y="639.5" ></text>
+</g>
+<g >
+<title>dax_delete_mapping_entry (1,333,333 samples, 0.33%)</title><rect x="29.3" y="437" width="3.8" height="15.0" fill="rgb(218,219,3)" rx="2" ry="2" />
+<text  x="32.28" y="447.5" ></text>
+</g>
+<g >
+<title>std::unordered_map&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, leveldb::MemHashTableValue*, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, leveldb::MemHashTableValue*&gt; &gt; &gt;::operator[] (2,666,666 samples, 0.65%)</title><rect x="522.9" y="373" width="7.7" height="15.0" fill="rgb(205,80,27)" rx="2" ry="2" />
+<text  x="525.88" y="383.5" ></text>
+</g>
+<g >
+<title>__do_fault (5,333,332 samples, 1.31%)</title><rect x="557.6" y="277" width="15.4" height="15.0" fill="rgb(208,217,12)" rx="2" ry="2" />
+<text  x="560.58" y="287.5" ></text>
+</g>
+<g >
+<title>std::mutex::lock (1,333,333 samples, 0.33%)</title><rect x="1024.2" y="453" width="3.8" height="15.0" fill="rgb(253,227,50)" rx="2" ry="2" />
+<text  x="1027.18" y="463.5" ></text>
+</g>
+<g >
+<title>smp_apic_timer_interrupt (1,333,333 samples, 0.33%)</title><rect x="869.9" y="293" width="3.9" height="15.0" fill="rgb(231,117,36)" rx="2" ry="2" />
+<text  x="872.93" y="303.5" ></text>
+</g>
+<g >
+<title>dax_finish_sync_fault (3,999,999 samples, 0.98%)</title><rect x="557.6" y="229" width="11.6" height="15.0" fill="rgb(212,71,30)" rx="2" ry="2" />
+<text  x="560.58" y="239.5" ></text>
+</g>
+<g >
+<title>leveldb::Slice::size (1,333,333 samples, 0.33%)</title><rect x="931.6" y="325" width="3.9" height="15.0" fill="rgb(215,144,40)" rx="2" ry="2" />
+<text  x="934.63" y="335.5" ></text>
+</g>
+<g >
+<title>submit_bio_wait (1,333,333 samples, 0.33%)</title><rect x="337.8" y="453" width="3.8" height="15.0" fill="rgb(241,203,11)" rx="2" ry="2" />
+<text  x="340.78" y="463.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_default_n&lt;std::queue&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::deque&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem, std::allocator&lt;leveldb::(anonymous namespace)::PosixEnv::BackgroundWorkItem&gt; &gt; &gt;*, unsigned long&gt; (1,333,333 samples, 0.33%)</title><rect x="40.8" y="533" width="3.9" height="15.0" fill="rgb(242,117,4)" rx="2" ry="2" />
+<text  x="43.85" y="543.5" ></text>
+</g>
+<g >
+<title>__bad_area_nosemaphore (1,333,333 samples, 0.33%)</title><rect x="573.0" y="293" width="3.9" height="15.0" fill="rgb(239,47,49)" rx="2" ry="2" />
+<text  x="576.01" y="303.5" ></text>
+</g>
+<g >
+<title>proc_reg_open (2,666,666 samples, 0.65%)</title><rect x="21.6" y="533" width="7.7" height="15.0" fill="rgb(231,98,13)" rx="2" ry="2" />
+<text  x="24.57" y="543.5" ></text>
+</g>
+<g >
+<title>radix_tree_next_chunk (1,333,333 samples, 0.33%)</title><rect x="1182.3" y="581" width="3.8" height="15.0" fill="rgb(232,56,23)" rx="2" ry="2" />
+<text  x="1185.29" y="591.5" ></text>
+</g>
+<g >
+<title>__ext4_journal_start_sb (5,333,332 samples, 1.31%)</title><rect x="341.6" y="501" width="15.5" height="15.0" fill="rgb(223,64,38)" rx="2" ry="2" />
+<text  x="344.63" y="511.5" ></text>
+</g>
+<g >
+<title>leveldb::Benchmark::DoWrite (158,666,627 samples, 38.89%)</title><rect x="673.3" y="517" width="458.9" height="15.0" fill="rgb(254,140,23)" rx="2" ry="2" />
+<text  x="676.27" y="527.5" >leveldb::Benchmark::DoWrite</text>
+</g>
+<g >
+<title>std::__future_base::_Result&lt;leveldb::Status&gt;::~_Result (1,333,333 samples, 0.33%)</title><rect x="1105.2" y="277" width="3.8" height="15.0" fill="rgb(236,7,8)" rx="2" ry="2" />
+<text  x="1108.16" y="287.5" ></text>
+</g>
+<g >
+<title>std::future&lt;leveldb::Status&gt;::get (2,666,666 samples, 0.65%)</title><rect x="1062.7" y="485" width="7.8" height="15.0" fill="rgb(235,86,39)" rx="2" ry="2" />
+<text  x="1065.75" y="495.5" ></text>
+</g>
+<g >
+<title>leveldb::DBImpl::WriteLevel0Table (75,999,981 samples, 18.63%)</title><rect x="453.5" y="453" width="219.8" height="15.0" fill="rgb(228,202,34)" rx="2" ry="2" />
+<text  x="456.46" y="463.5" >leveldb::DBImpl::WriteLevel0T..</text>
+</g>
+<g >
+<title>__pthread_disable_asynccancel (1,333,333 samples, 0.33%)</title><rect x="395.6" y="677" width="3.9" height="15.0" fill="rgb(239,182,39)" rx="2" ry="2" />
+<text  x="398.62" y="687.5" ></text>
+</g>
+<g >
+<title>rw_verify_area (1,333,333 samples, 0.33%)</title><rect x="391.8" y="581" width="3.8" height="15.0" fill="rgb(237,195,23)" rx="2" ry="2" />
+<text  x="394.76" y="591.5" ></text>
+</g>
+<g >
+<title>std::__invoke_impl&lt;void, void  (9,333,331 samples, 2.29%)</title><rect x="407.2" y="597" width="27.0" height="15.0" fill="rgb(228,120,11)" rx="2" ry="2" />
+<text  x="410.19" y="607.5" >s..</text>
+</g>
+<g >
+<title>__mutex_lock.isra.4 (2,666,666 samples, 0.65%)</title><rect x="603.9" y="149" width="7.7" height="15.0" fill="rgb(253,54,14)" rx="2" ry="2" />
+<text  x="606.86" y="159.5" ></text>
+</g>
+<g >
+<title>submit_bio_wait (1,333,333 samples, 0.33%)</title><rect x="569.2" y="149" width="3.8" height="15.0" fill="rgb(219,198,22)" rx="2" ry="2" />
+<text  x="572.15" y="159.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;std::__future_base::_State_baseV2,  (2,666,666 samples, 0.65%)</title><rect x="1062.7" y="453" width="7.8" height="15.0" fill="rgb(236,74,26)" rx="2" ry="2" />
+<text  x="1065.75" y="463.5" ></text>
+</g>
+<g >
+<title>__GI___unlink (1,333,333 samples, 0.33%)</title><rect x="29.3" y="613" width="3.8" height="15.0" fill="rgb(207,213,31)" rx="2" ry="2" />
+<text  x="32.28" y="623.5" ></text>
+</g>
+<g >
+<title>igrab (1,333,333 samples, 0.33%)</title><rect x="557.6" y="85" width="3.8" height="15.0" fill="rgb(211,11,10)" rx="2" ry="2" />
+<text  x="560.58" y="95.5" ></text>
+</g>
+<g >
+<title>leveldb::Status::operator= (1,333,333 samples, 0.33%)</title><rect x="738.8" y="469" width="3.9" height="15.0" fill="rgb(229,62,51)" rx="2" ry="2" />
+<text  x="741.82" y="479.5" ></text>
+</g>
+<g >
+<title>rcu_report_qs_rnp (1,333,333 samples, 0.33%)</title><rect x="418.8" y="437" width="3.8" height="15.0" fill="rgb(208,80,22)" rx="2" ry="2" />
+<text  x="421.76" y="447.5" ></text>
+</g>
+<g >
+<title>leveldb::DecodeFixed32 (1,333,333 samples, 0.33%)</title><rect x="1128.3" y="469" width="3.9" height="15.0" fill="rgb(240,214,26)" rx="2" ry="2" />
+<text  x="1131.30" y="479.5" ></text>
+</g>
+<g >
+<title>do_page_fault (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="661" width="3.9" height="15.0" fill="rgb(236,180,0)" rx="2" ry="2" />
+<text  x="1189.14" y="671.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (1,333,333 samples, 0.33%)</title><rect x="1186.1" y="549" width="3.9" height="15.0" fill="rgb(230,177,43)" rx="2" ry="2" />
+<text  x="1189.14" y="559.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_default_n_1&lt;true&gt;::__uninit_default_n&lt;char*, unsigned long&gt; (5,333,332 samples, 1.31%)</title><rect x="657.8" y="325" width="15.5" height="15.0" fill="rgb(225,216,13)" rx="2" ry="2" />
+<text  x="660.84" y="335.5" ></text>
+</g>
+<g >
+<title>submit_bio (1,333,333 samples, 0.33%)</title><rect x="569.2" y="133" width="3.8" height="15.0" fill="rgb(214,77,4)" rx="2" ry="2" />
+<text  x="572.15" y="143.5" ></text>
+</g>
+<g >
+<title>ext4_map_blocks (3,999,999 samples, 0.98%)</title><rect x="330.1" y="501" width="11.5" height="15.0" fill="rgb(248,222,35)" rx="2" ry="2" />
+<text  x="333.07" y="511.5" ></text>
+</g>
+</g>
+</svg>

@@ -270,8 +270,6 @@ if(HAVE_CLANG_THREAD_SAFETY)
       -Werror -Wthread-safety)
 endif(HAVE_CLANG_THREAD_SAFETY)
 
-# Link pmem to leveldb
-target_link_libraries(leveldb pmem)
 
 if(HAVE_CRC32C)
   target_link_libraries(leveldb crc32c)
@@ -286,6 +284,17 @@ if(HAVE_TCMALLOC)
   target_link_libraries(leveldb tcmalloc)
 endif(HAVE_TCMALLOC)
 
+find_library(
+  LIBPMEM
+  NAMES libpmem.so
+  HINTS /usr/local/lib
+  REQUIRED
+)
+
+# Link pmem to leveldb
+target_link_libraries(leveldb numa)
+target_link_libraries(leveldb ${LIBPMEM})
+
 # Needed by port_stdcxx.h
 find_package(Threads REQUIRED)
 target_link_libraries(leveldb Threads::Threads)
@@ -293,7 +302,7 @@ target_link_libraries(leveldb Threads::Threads)
 add_executable(leveldbutil
   "db/leveldbutil.cc"
 )
-target_link_libraries(leveldbutil leveldb numa pmem)
+target_link_libraries(leveldbutil leveldb)
 
 if(LEVELDB_BUILD_TESTS)
   enable_testing()
@@ -355,7 +364,7 @@ if(LEVELDB_BUILD_TESTS)
         "util/logging_test.cc"
     )
   endif(NOT BUILD_SHARED_LIBS)
-  target_link_libraries(leveldb_tests leveldb gmock gtest gtest_main numa pmem)
+  target_link_libraries(leveldb_tests leveldb gmock gtest gtest_main)
   target_compile_definitions(leveldb_tests
     PRIVATE
       ${LEVELDB_PLATFORM_NAME}=1
@@ -381,7 +390,7 @@ if(LEVELDB_BUILD_TESTS)
 
         "${test_file}"
     )
-    target_link_libraries("${test_target_name}" leveldb gmock gtest numa pmem)
+    target_link_libraries("${test_target_name}" leveldb gmock gtest)
     target_compile_definitions("${test_target_name}"
       PRIVATE
         ${LEVELDB_PLATFORM_NAME}=1
@@ -429,7 +438,7 @@ if(LEVELDB_BUILD_BENCHMARKS)
 
         "${bench_file}"
     )
-    target_link_libraries("${bench_target_name}" leveldb gmock gtest benchmark numa pmem)
+    target_link_libraries("${bench_target_name}" leveldb gmock gtest benchmark)
     target_compile_definitions("${bench_target_name}"
       PRIVATE
         ${LEVELDB_PLATFORM_NAME}=1

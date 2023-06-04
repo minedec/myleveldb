@@ -1,12 +1,12 @@
 cd perf_pm
 
-perf record -e cpu-clock -g ./../../build/db_bench --benchmarks="fillseq" --db="/mnt/pmem0/dbtest"
+perf record -e cpu-clock -F 60 -g ./../../build/db_bench --benchmarks="fillseq" --db="/mnt/pmem0/dbtest"
 mv perf.data perf_pm_fillseq.data
-perf record -e cpu-clock -g ./../../build/db_bench --benchmarks="fillrandom" --db="/mnt/pmem0/dbtest"
+perf record -e cpu-clock -F 60 -g ./../../build/db_bench --benchmarks="fillrandom" --db="/mnt/pmem0/dbtest"
 mv perf.data perf_pm_fillrandom.data
-perf record -e cpu-clock -g ./../../build/db_bench --benchmarks="fillrandom,readseq" --db="/mnt/pmem0/dbtest"
+perf record -e cpu-clock -F 60 -g ./../../build/db_bench --benchmarks="fillrandom,readseq" --db="/mnt/pmem0/dbtest"
 mv perf.data perf_pm_frreadseq.data
-perf record -e cpu-clock -g ./../../build/db_bench --benchmarks="fillrandom,readrandom" --db="/mnt/pmem0/dbtest"
+perf record -e cpu-clock -F 60 -g ./../../build/db_bench --benchmarks="fillrandom,readrandom" --db="/mnt/pmem0/dbtest"
 mv perf.data perf_pm_frreadrandom.data
 
 sudo perf script -i perf_pm_fillseq.data > out_perf_pm_fillseq.perf

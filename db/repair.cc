@@ -298,10 +298,12 @@ class Repairer {
     // Create builder.
     std::string copy = TableFileName(dbname_, next_file_number_++);
     WritableFile* file;
-    Status s = env_->NewWritableFile(copy, &file);
-    if (!s.ok()) {
-      return;
-    }
+    // PMDB use mmap repair table
+    // Status s = env_->NewWritableFile(copy, &file);
+    // if (!s.ok()) {
+    //   return;
+    // }
+    Status s;
     TableBuilder* builder = new TableBuilder(options_, file);
 
     // Copy data.
@@ -326,7 +328,7 @@ class Repairer {
     builder = nullptr;
 
     if (s.ok()) {
-      s = file->Close();
+      // s = file->Close();
     }
     delete file;
     file = nullptr;

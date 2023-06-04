@@ -1,1 +1,0 @@
-perf record -e cpu-clock -g ./../build/db_bench --benchmarks="fillseq,fillrandom" --db="/mnt/pmem0/dbtest"

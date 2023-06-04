@@ -1,12 +1,12 @@
 cd perf_local
 
-perf record -e cpu-clock -g ./../../build/db_bench --benchmarks="fillseq" --db="/home/jjd/dbtest"
+perf record -e cpu-clock -F 60 -g --call-graph=dwarf ./../../build/db_bench --benchmarks="fillseq" --db="/home/jjd/dbtest"
 mv perf.data perf_local_fillseq.data
-perf record -e cpu-clock -g ./../../build/db_bench --benchmarks="fillrandom" --db="/home/jjd/dbtest"
+perf record -e cpu-clock -F 60 -g --call-graph=dwarf ./../../build/db_bench --benchmarks="fillrandom" --db="/home/jjd/dbtest"
 mv perf.data perf_local_fillrandom.data
-perf record -e cpu-clock -g ./../../build/db_bench --benchmarks="fillrandom,readseq" --db="/home/jjd/dbtest"
+perf record -e cpu-clock -F 60 -g --call-graph=dwarf ./../../build/db_bench --benchmarks="fillrandom,readseq" --db="/home/jjd/dbtest"
 mv perf.data perf_local_frreadseq.data
-perf record -e cpu-clock -g ./../../build/db_bench --benchmarks="fillrandom,readrandom" --db="/home/jjd/dbtest"
+perf record -e cpu-clock -F 60 -g --call-graph=dwarf ./../../build/db_bench --benchmarks="fillrandom,readrandom" --db="/home/jjd/dbtest"
 mv perf.data perf_local_frreadrandom.data
 
 sudo perf script -i perf_local_fillseq.data > out_perf_local_fillseq.perf

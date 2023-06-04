@@ -21,15 +21,16 @@ Status BuildTable(const std::string& dbname, Env* env, const Options& options,
   iter->SeekToFirst();
 
   std::string fname = TableFileName(dbname, meta->number);
-  // printf("builder->buildtable fname %s\n", fname.c_str());
   if (iter->Valid()) {
+    // PMDB use mmap write l0 table, file is nullptr
     WritableFile* file;
-    s = env->NewWritableFile(fname, &file);
-    if (!s.ok()) {
-      return s;
-    }
+    // s = env->NewWritableFile(fname, &file);
+    // if (!s.ok()) {
+    //   return s;
+    // }
 
     TableBuilder* builder = new TableBuilder(options, file);
+    builder->setFileName(fname);
     meta->smallest.DecodeFrom(iter->key());
     Slice key;
     for (; iter->Valid(); iter->Next()) {
@@ -55,12 +56,12 @@ Status BuildTable(const std::string& dbname, Env* env, const Options& options,
 
     // Finish and check for file errors
     if (s.ok()) {
-      s = file->Sync();
+      // s = file->Sync();
     }
     if (s.ok()) {
-      s = file->Close();
+      // s = file->Close();
     }
-    delete file;
+    // delete file;
     file = nullptr;
 
     if (s.ok()) {

@@ -10,6 +10,9 @@
 #include "util/coding.h"
 #include "util/crc32c.h"
 
+#include <libpmem.h>
+#include <iostream>
+
 namespace leveldb {
 namespace log {
 
@@ -32,6 +35,12 @@ Writer::Writer(WritableFile* dest, uint64_t dest_length)
 Writer::~Writer() = default;
 
 Status Writer::AddRecord(const Slice& slice) {
+  if(laddr == nullptr) {
+    // mmap to create a file
+    if((laddr = (char*)pmem_map_file(filename_.c_str(), MAX_LEN, PMEM_FILE_CREATE, 0666, &mapped_len, &is_pmem)) == nullptr) {
+      std::cout << "log_writer pmem_map_file error\n";
+    }
+  }
   const char* ptr = slice.data();
   size_t left = slice.size();
 
@@ -48,7 +57,11 @@ Status Writer::AddRecord(const Slice& slice) {
       if (leftover > 0) {
         // Fill the trailer (literal below relies on kHeaderSize being 7)
         static_assert(kHeaderSize == 7, "");
-        dest_->Append(Slice("\x00\x00\x00\x00\x00\x00", leftover));
+        // dest_->Append(Slice("\x00\x00\x00\x00\x00\x00", leftover));
+
+        // PMDB append padding use memcpy
+        pmem_memcpy(laddr + loffset_, "\x00\x00\x00\x00\x00\x00", leftover, 0);
+        loffset_ += leftover;
       }
       block_offset_ = 0;
     }
@@ -96,15 +109,42 @@ Status Writer::EmitPhysicalRecord(RecordType t, const char* ptr,
   EncodeFixed32(buf, crc);
 
   // Write the header and the payload
-  Status s = dest_->Append(Slice(buf, kHeaderSize));
+  // Status s = dest_->Append(Slice(buf, kHeaderSize));
+
+  // PMDB use memcpy write header and payload
+  pmem_memcpy(laddr + loffset_, &buf, kHeaderSize, 0);
+  loffset_ += kHeaderSize;
+  Status s = Status::OK();
+
   if (s.ok()) {
-    s = dest_->Append(Slice(ptr, length));
+    // s = dest_->Append(Slice(ptr, length));
+
+    // PMDB
+    pmem_memcpy(laddr + loffset_, ptr, length, 0);
+    loffset_ += length;
+
     if (s.ok()) {
-      s = dest_->Flush();
+      // s = dest_->Flush();
+
+      // PMDB use persist
+      if(is_pmem) {
+        pmem_persist(laddr + lpersist_offset_, loffset_ - lpersist_offset_);
+        lpersist_offset_ = loffset_;
+      }
+      // pmem_unmap(laddr, lpersist_offset_);
     }
   }
   block_offset_ += kHeaderSize + length;
   return s;
+}
+
+// PMDB set file name
+void Writer::setFileName(std::string filename) {
+  filename_ = filename;
+}
+
+void Writer::Close() {
+  pmem_unmap(laddr, loffset_);
 }
 
 }  // namespace log

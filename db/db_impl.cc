@@ -187,7 +187,9 @@ DBImpl::~DBImpl() {
 
   delete tmp_batch_;
   delete log_;
-  delete logfile_;
+  if(logfile_ != nullptr) {
+    delete logfile_;
+  }
   delete table_cache_;
 
   if (owns_info_log_) {
@@ -206,24 +208,30 @@ Status DBImpl::NewDB() {
   new_db.SetLastSequence(0);
 
   const std::string manifest = DescriptorFileName(dbname_, 1);
-  WritableFile* file;
-  Status s = env_->NewWritableFile(manifest, &file);
-  if (!s.ok()) {
-    return s;
-  }
+  WritableFile* file = nullptr;
+  Status s;
+  // Status s = env_->NewWritableFile(manifest, &file);
+  // if (!s.ok()) {
+  //   return s;
+  // }
+  // PMDB 
   {
     log::Writer log(file);
+    log.setFileName(manifest);
     std::string record;
     new_db.EncodeTo(&record);
-    s = log.AddRecord(record);
+    s = log.AddRecord(Slice(record));
     if (s.ok()) {
-      s = file->Sync();
+      // s = file->Sync();
     }
     if (s.ok()) {
-      s = file->Close();
+      // s = file->Close();
+      log.Close();
     }
   }
-  delete file;
+  if(file != nullptr) {
+    delete file;
+  }
   if (s.ok()) {
     // Make "CURRENT" file that points to the new manifest file.
     s = SetCurrentFile(env_, dbname_, 1);
@@ -510,11 +518,16 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
     assert(log_ == nullptr);
     assert(mem_ == nullptr);
     uint64_t lfile_size;
-    if (env_->GetFileSize(fname, &lfile_size).ok() &&
-        env_->NewAppendableFile(fname, &logfile_).ok()) {
-      Log(options_.info_log, "Reusing old log %s \n", fname.c_str());
-      log_ = new log::Writer(logfile_, lfile_size);
-      logfile_number_ = log_number;
+    // PMDB use mmap to recover log and modify offset to append
+    // if (env_->GetFileSize(fname, &lfile_size).ok() &&
+    //     env_->NewAppendableFile(fname, &logfile_).ok()) {
+      if (env_->GetFileSize(fname, &lfile_size).ok()) {
+        Log(options_.info_log, "Reusing old log %s \n", fname.c_str());
+        log_ = new log::Writer(logfile_, lfile_size);
+        log_->setFileName(fname);
+        log_->loffset_ = lfile_size;
+        log_->lpersist_offset_ = lfile_size;
+        logfile_number_ = log_number;
       if (mem != nullptr) {
         mem_ = mem;
         mem = nullptr;
@@ -579,7 +592,6 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
       key = iter->key();
       ParseInternalKey(key, &ikey);
       MemHashTableValue* v = mem_hashtable_->getTableValue(ikey.user_key);
-      assert(ikey.type != kTypeDeletion);
       if(v == nullptr) {
         // printf("write l0 table user key %s is empty\n", ikey.user_key.ToString().c_str());
         v = new MemHashTableValue();
@@ -898,17 +910,19 @@ Status DBImpl::OpenCompactionOutputFile(CompactionState* compact) {
 
   // Make the output file
   std::string fname = TableFileName(dbname_, file_number);
-  Status s = env_->NewWritableFile(fname, &compact->outfile);
-  if (s.ok()) {
+  // PMDB use mmap write compact file
+  // Status s = env_->NewWritableFile(fname, &compact->outfile);
+  // if (s.ok()) {
     compact->builder = new TableBuilder(options_, compact->outfile);
-  }
-  return s;
+    compact->builder->setFileName(fname);
+  // }
+  return Status::OK();
 }
 
 Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
                                           Iterator* input) {
   assert(compact != nullptr);
-  assert(compact->outfile != nullptr);
+  // assert(compact->outfile != nullptr);
   assert(compact->builder != nullptr);
 
   const uint64_t output_number = compact->current_output()->number;
@@ -930,10 +944,10 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
 
   // Finish and check for file errors
   if (s.ok()) {
-    s = compact->outfile->Sync();
+    // s = compact->outfile->Sync();
   }
   if (s.ok()) {
-    s = compact->outfile->Close();
+    // s = compact->outfile->Close();
   }
   delete compact->outfile;
   compact->outfile = nullptr;
@@ -1360,11 +1374,11 @@ void DBImpl::WriteWrapper(std::promise<Status>* promise, const WriteOptions& opt
     // into mem_.
     {
       mutex_.Unlock();
-      // std::cout << "log addrecord at thread: " << gettid() << "\n";
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
       if (status.ok() && options.sync) {
-        status = logfile_->Sync();
+        // PMDB
+        // status = logfile_->Sync();
         if (!status.ok()) {
           sync_error = true;
         }
@@ -1497,16 +1511,20 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       assert(versions_->PrevLogNumber() == 0);
       uint64_t new_log_number = versions_->NewFileNumber();
       WritableFile* lfile = nullptr;
-      s = env_->NewWritableFile(LogFileName(dbname_, new_log_number), &lfile);
+      // PMDB use mmap log file
+      // s = env_->NewWritableFile(LogFileName(dbname_, new_log_number), &lfile);
+      s = Status::OK();
       if (!s.ok()) {
         // Avoid chewing through file number space in a tight loop.
         versions_->ReuseFileNumber(new_log_number);
         break;
       }
 
+      // s = logfile_->Close();
+      // PMDB
+      log_->Close();
       delete log_;
 
-      s = logfile_->Close();
       if (!s.ok()) {
         // We may have lost some data written to the previous log file.
         // Switch to the new log file anyway, but record as a background
@@ -1517,11 +1535,14 @@ Status DBImpl::MakeRoomForWrite(bool force) {
         // would add more complexity in a critical code path.
         RecordBackgroundError(s);
       }
-      delete logfile_;
+      if(logfile_ != nullptr) {
+        delete logfile_;
+      }
 
       logfile_ = lfile;
       logfile_number_ = new_log_number;
       log_ = new log::Writer(lfile);
+      log_->setFileName(LogFileName(dbname_, new_log_number));
       imm_ = mem_;
       has_imm_.store(true, std::memory_order_release);
       mem_ = new MemTable(internal_comparator_);
@@ -1670,14 +1691,16 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   if (s.ok() && impl->mem_ == nullptr) {
     // Create new log and a corresponding memtable.
     uint64_t new_log_number = impl->versions_->NewFileNumber();
-    WritableFile* lfile;
-    s = options.env->NewWritableFile(LogFileName(dbname, new_log_number),
-                                     &lfile);
+    WritableFile* lfile = nullptr;
+    // PMDB use mmap log file
+    // s = options.env->NewWritableFile(LogFileName(dbname, new_log_number),
+    //                                  &lfile);
     if (s.ok()) {
       edit.SetLogNumber(new_log_number);
       impl->logfile_ = lfile;
       impl->logfile_number_ = new_log_number;
       impl->log_ = new log::Writer(lfile);
+      impl->log_->setFileName(LogFileName(dbname, new_log_number));
       impl->mem_ = new MemTable(impl->internal_comparator_);
       impl->mem_->Ref();
     }

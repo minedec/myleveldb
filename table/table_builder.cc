@@ -73,6 +73,7 @@ struct TableBuilder::Rep {
   std::vector<char> builder_buf;
   uint64_t MAX_LEN = 1024 * 1024 * 4;
   uint64_t buf_pos = 0;
+  std::string filename_;
 };
 
 TableBuilder::TableBuilder(const Options& options, WritableFile* file)
@@ -166,12 +167,7 @@ void TableBuilder::Flush() {
 
     for(ParsedInternalKey ikey : r->tmp_keys) {
       MemHashTableValue* v = DBImpl::dbimpl_instance->mem_hashtable_->getTableValue(ikey.user_key);
-      if(ikey.type == kTypeDeletion) {
-        //Pass
-        // printf("builder handle block delete user key %s\n", ikey.user_key.ToString().c_str());
-        DBImpl::dbimpl_instance->mem_hashtable_->deleteKey(ikey.user_key);
-        continue;
-      }
+      assert(ikey.type != kTypeDeletion);
       if (v == nullptr) {
         // printf("builder add new user key %s\n", ikey.user_key.ToString().c_str());
         v = new MemHashTableValue();
@@ -187,7 +183,7 @@ void TableBuilder::Flush() {
     r->pending_index_entry = true;
 
     // PMDB if is manifest, do regular way
-    if(PosixWritableFile::IsManifest(r->file->getFileName())) {
+    if(PosixWritableFile::IsManifest(r->filename_)) {
       r->status = r->file->Flush();
     }
   }
@@ -254,7 +250,7 @@ void TableBuilder::WriteRawBlock(const Slice& block_contents,
   handle->set_size(block_contents.size());
   
   // PMDB if is manifest, do regular way
-  if(PosixWritableFile::IsManifest(r->file->getFileName())) {
+  if(PosixWritableFile::IsManifest(r->filename_)) {
     r->status = r->file->Append(block_contents);
   } else {
     // PMDB append block_contents to buf
@@ -273,7 +269,7 @@ void TableBuilder::WriteRawBlock(const Slice& block_contents,
     EncodeFixed32(trailer + 1, crc32c::Mask(crc));
     
     // PMDB if is manifest, do regular way
-    if(PosixWritableFile::IsManifest(r->file->getFileName())) {
+    if(PosixWritableFile::IsManifest(r->filename_)) {
       r->status = r->file->Append(Slice(trailer, kBlockTrailerSize));
     } else {
       // PMDB append trailer to buf
@@ -341,7 +337,7 @@ Status TableBuilder::Finish() {
     footer.EncodeTo(&footer_encoding);
     
     // PMDB if is manifest, do regular way
-    if(PosixWritableFile::IsManifest(r->file->getFileName())) {
+    if(PosixWritableFile::IsManifest(r->filename_)) {
       r->status = r->file->Append(footer_encoding);
     } else {
       //PMDB append footer
@@ -358,11 +354,20 @@ Status TableBuilder::Finish() {
   }
 
   // PMDB use mmap to flush data to PM and truncate file size
-  if(!PosixWritableFile::IsManifest(r->file->getFileName())) {
+  if(!PosixWritableFile::IsManifest(r->filename_)) {
     assert(r->buf_pos == r->offset);
-    ftruncate(r->file->getFd(), r->offset);
-    char* faddr = (char*)mmap(NULL, r->MAX_LEN, PROT_READ | PROT_WRITE, MAP_SHARED, r->file->getFd(), 0);
-    memcpy(faddr, &r->builder_buf[0], r->buf_pos);
+    size_t mapped_len;
+    int is_pmem;
+    char* faddr;
+    if((faddr = (char*)pmem_map_file(r->filename_.c_str(), r->buf_pos, PMEM_FILE_CREATE, 0666, &mapped_len, &is_pmem)) == nullptr) {
+      std::cout << "pmem_map_file error\n";
+    }
+    pmem_memcpy(faddr, &r->builder_buf[0], r->buf_pos, 0);
+    if(is_pmem) {
+      pmem_persist(faddr, mapped_len);
+    }
+    pmem_unmap(faddr, r->buf_pos);
+    
   }
 
   return r->status;
@@ -377,5 +382,10 @@ void TableBuilder::Abandon() {
 uint64_t TableBuilder::NumEntries() const { return rep_->num_entries; }
 
 uint64_t TableBuilder::FileSize() const { return rep_->offset; }
+
+// PMDB set file name
+void TableBuilder::setFileName(std::string filename) {
+  rep_->filename_ = filename;
+}
 
 }  // namespace leveldb
