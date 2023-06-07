@@ -82,6 +82,8 @@ class LEVELDB_EXPORT TableBuilder {
   // PMDB set filename
   void setFileName(std::string filename);
 
+  void setFileNumber(uint64_t filenumber);
+
  private:
   bool ok() const { return status().ok(); }
   void WriteBlock(BlockBuilder* block, BlockHandle* handle);

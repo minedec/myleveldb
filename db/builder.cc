@@ -31,17 +31,13 @@ Status BuildTable(const std::string& dbname, Env* env, const Options& options,
 
     TableBuilder* builder = new TableBuilder(options, file);
     builder->setFileName(fname);
+    builder->setFileNumber(meta->number);
     meta->smallest.DecodeFrom(iter->key());
     Slice key;
     for (; iter->Valid(); iter->Next()) {
-      // ParsedInternalKey ikey;
-      // ParseInternalKey(key, &ikey);
-      // printf("builder->add user key %s\n", ikey.user_key.ToString().c_str());
-
       key = iter->key();
       builder->Add(key, iter->value());
     }
-    // printf("builder->add loop finish\n");
     if (!key.empty()) {
       meta->largest.DecodeFrom(key);
     }

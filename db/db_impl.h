@@ -252,6 +252,8 @@ class MemHashTableValue {
     uint64_t sstable_file_size_ = -1;
     uint64_t offset_ = -1;
     std::string block_handle_encoding_ = "";
+    uint64_t sequence_number_ = -1;
+    bool on_change = false;
 
     MemHashTableValue() {}
 
@@ -262,7 +264,7 @@ class MemHashTable {
   public:
     void setValue(Slice &key, MemHashTableValue* value);
 
-    Status getValue(ReadOptions const &options, LookupKey const & key, std::string *value);
+    bool getValue(ReadOptions const &options, LookupKey & key, std::string *value);
 
     void deleteKey(Slice &key);
 

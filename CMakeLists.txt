@@ -284,6 +284,7 @@ if(HAVE_TCMALLOC)
   target_link_libraries(leveldb tcmalloc)
 endif(HAVE_TCMALLOC)
 
+# PMDB
 find_library(
   LIBPMEM
   NAMES libpmem.so
@@ -294,6 +295,8 @@ find_library(
 # Link pmem to leveldb
 target_link_libraries(leveldb numa)
 target_link_libraries(leveldb ${LIBPMEM})
+
+add_definitions(-DDEBUG_PRINT=0)
 
 # Needed by port_stdcxx.h
 find_package(Threads REQUIRED)

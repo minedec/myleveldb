@@ -67,13 +67,16 @@ struct TableBuilder::Rep {
   std::string compressed_output;
 
   // PMDB temporaily store insert key, when finish block, add block handle encoding
-  std::vector<ParsedInternalKey> tmp_keys;
+  std::vector<std::string> tmp_keys;
+  // std::vector<std::string> tmpskeys;
+  std::vector<uint64_t> tmp_seq;
 
   // PMDB add char array to append table content
   std::vector<char> builder_buf;
   uint64_t MAX_LEN = 1024 * 1024 * 4;
   uint64_t buf_pos = 0;
   std::string filename_;
+  uint64_t filenumber_;
 };
 
 TableBuilder::TableBuilder(const Options& options, WritableFile* file)
@@ -131,18 +134,46 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
   ParsedInternalKey ikey;
   ParseInternalKey(key, &ikey);
   if(ikey.type == kTypeDeletion) {
-    // printf("builder add delete user key %s\n", ikey.user_key.ToString().c_str());
+#if DEBUG_PRINT
+     printf("table_builder delete key %s\n", ikey.user_key.ToString().c_str());
+#endif
+    DBImpl::dbimpl_instance->mem_hashtable_->deleteKey(ikey.user_key);
   } else {
-    r->tmp_keys.push_back(ikey);
+#if DEBUG_PRINT
+    printf("table_builder #%ld, key %s push tmp_keys %p\n", r->filenumber_, ikey.user_key.ToString().c_str(),
+      &r->tmp_keys);
+    printf("data addr %p\n", ikey.user_key.data());
+#endif
+    MemHashTableValue* v = DBImpl::dbimpl_instance->mem_hashtable_->getTableValue(ikey.user_key);
+    if(v == nullptr || (v != nullptr && v->sequence_number_ <= ikey.sequence)) {
+      r->tmp_keys.push_back(ikey.user_key.ToString());
+      // r->tmpskeys.push_back(ikey.user_key.ToString());
+      r->tmp_seq.push_back(ikey.sequence);
+    }
   }
 
   r->last_key.assign(key.data(), key.size());
   r->num_entries++;
   r->data_block.Add(key, value);
+#if DEBUG_PRINT
+  printf("table_builder #%ld, key %s add to data block, key type %s, key addr %p\n", r->filenumber_, ikey.user_key.ToString().c_str(),
+    (ikey.type == kTypeValue)?"kTypeValue":"kTypeDeletion", &ikey);
+#endif
 
   const size_t estimated_block_size = r->data_block.CurrentSizeEstimate();
   if (estimated_block_size >= r->options.block_size) {
-    // printf("table_builder::Add user key %s trigger flush\n", ikey.user_key.ToString().c_str());
+#if DEBUG_PRINT
+     printf("table_builder::Add user key %s trigger flush\n", ikey.user_key.ToString().c_str());
+    printf("before flush()\n");
+    for(int i = 0; i < r->tmp_keys.size(); i++) {
+      printf("#%ld before flush tmp key %s, tmp_keys %p, key addr %p\n", r->filenumber_, r->tmp_keys[i].c_str(),
+        &r->tmp_keys, &r->tmp_keys[i]);
+      // printf("#%ld before flush tmp key s %s, tmp_keys %p, key addr %p\n", r->filenumber_, r->tmpskeys[i].c_str(),
+      //   &r->tmpskeys, &r->tmpskeys[i]);
+      printf("slice data addr %p\n", r->tmp_keys[i].data());
+      // printf("string data addr %p\n", r->tmpskeys[i].data());
+    }
+#endif
     Flush();
   }
 }
@@ -155,31 +186,41 @@ void TableBuilder::Flush() {
   assert(!r->pending_index_entry);
   WriteBlock(&r->data_block, &r->pending_handle);
   if (ok()) {
-    // Add block pending_handle to user key hash table
-    // printf("table_builder::flush block handle offset %ld, size %ld\n", r->pending_handle.offset(), r->pending_handle.size());
-    
     // PMDB add handle index encoding
     std::string handle_encoding;
     r->pending_handle.EncodeTo(&handle_encoding);
-    // for(ParsedInternalKey ikey : r->tmp_keys) {
-    //   printf("table_builder::flush tmp_keys user key %s\n", ikey.user_key.ToString().c_str());
-    // }
-
-    for(ParsedInternalKey ikey : r->tmp_keys) {
-      MemHashTableValue* v = DBImpl::dbimpl_instance->mem_hashtable_->getTableValue(ikey.user_key);
-      assert(ikey.type != kTypeDeletion);
+    assert(r->tmp_keys.size() == r->tmp_seq.size());
+    for(int i = 0; i < r->tmp_keys.size(); i++) {
+      std::string ukey = r->tmp_keys[i];
+      uint64_t seq = r->tmp_seq[i];
+      Slice uskey(ukey);
+      MemHashTableValue* v = DBImpl::dbimpl_instance->mem_hashtable_->getTableValue(uskey);
       if (v == nullptr) {
-        // printf("builder add new user key %s\n", ikey.user_key.ToString().c_str());
+#if DEBUG_PRINT
+         printf("table builder #%ld add new key %s\n", r->filenumber_, ukey.c_str());
+#endif
         v = new MemHashTableValue();
+      } else {
+#if DEBUG_PRINT
+        printf("table builder #%ld key %s exist\n", r->filenumber_, ukey.c_str());
+#endif
       }
+      v->on_change = true;
+#if DEBUG_PRINT
+      printf("table builder #%ld key %s on change true\n", r->filenumber_, ukey.c_str());
+#endif
       v->block_handle_encoding_ = std::string(handle_encoding);
-      // BlockHandle bh;
-      // bh.DecodeFrom(new Slice(v->block_handle_encoding_));
-      // printf("add hash block handle offset %ld, size %ld, user key %s\n", bh.offset(), bh.size(), ikey.user_key.ToString().c_str());
-      DBImpl::dbimpl_instance->mem_hashtable_->setValue(ikey.user_key, v);
+      v->sequence_number_ = seq;
+#if DEBUG_PRINT
+      BlockHandle bh;
+      bh.DecodeFrom(new Slice(v->block_handle_encoding_));
+       printf("table builder #%ld add hash block handle offset %ld, size %ld, key %s\n", r->filenumber_, bh.offset(), bh.size(), ukey.c_str());
+#endif
+      DBImpl::dbimpl_instance->mem_hashtable_->setValue(uskey, v);
     }
     r->tmp_keys.clear();
-
+    // r->tmpskeys.clear();
+    r->tmp_seq.clear();
     r->pending_index_entry = true;
 
     // PMDB if is manifest, do regular way
@@ -386,6 +427,10 @@ uint64_t TableBuilder::FileSize() const { return rep_->offset; }
 // PMDB set file name
 void TableBuilder::setFileName(std::string filename) {
   rep_->filename_ = filename;
+}
+
+void TableBuilder::setFileNumber(uint64_t filenumber) {
+  rep_->filenumber_ = filenumber;
 }
 
 }  // namespace leveldb

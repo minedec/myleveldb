@@ -849,7 +849,7 @@ PosixEnv::PosixEnv()
       started_background_thread_(false),
       mmap_limiter_(MaxMmaps()),
       fd_limiter_(MaxOpenFiles()) {
-        int node_num = numa_num_possible_nodes();
+        int node_num = numa_max_node() + 1;
         // background_work_mutexs_.resize(node_num);
         for(int i = 0; i < node_num; ++i) {
           background_work_mutexs_.push_back(new port::Mutex());
@@ -888,7 +888,7 @@ void PosixEnv::ScheduleNuma(
   background_work_mutexs_[node_id]->Lock();
 
   // Start the background threads, if we haven't done so already.
-  for(int i = 0; i <= numa_max_node(); ++i) {
+  for(int i = 0; i < numa_max_node() + 1; ++i) {
     if (!started_background_threads_[i]) {
       started_background_threads_[i] = true;
       std::thread background_thread(PosixEnv::BackgroundThreadNodeEntryPoint, this, i);

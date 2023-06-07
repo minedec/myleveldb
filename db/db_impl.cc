@@ -98,7 +98,8 @@ struct DBImpl::CompactionState {
   uint64_t total_bytes;
 
   // PMDB store tmp userkey
-  std::vector<ParsedInternalKey> tmp_keys;
+  std::vector<std::string> tmp_keys;
+  std::vector<uint64_t> tmp_seq;
 };
 
 // Fix user-supplied options to be reasonable
@@ -137,6 +138,17 @@ Options SanitizeOptions(const std::string& dbname,
 static int TableCacheSize(const Options& sanitized_options) {
   // Reserve ten files or so for other uses and give the rest to TableCache.
   return sanitized_options.max_open_files - kNumNonTableCacheFiles;
+}
+
+static int GetNodeFromPath(std::string db_path) {
+  int res = 0;
+  int node_num = numa_max_node() + 1;
+  for(int i = 0; i < node_num; i++) {
+    if(res = db_path.find("pmem"+std::to_string(i)) != std::string::npos) {
+      return i;
+    }
+  }
+  return 0;
 }
 
 DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
@@ -494,7 +506,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
       need_bgflush_l0 = true;
       recover_mem = mem;
       recover_edit = edit;
-      env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
+      env_->ScheduleNuma(&DBImpl::BGWork, this, GetNodeFromPath(dbname_));
       while(need_bgflush_l0);
       status = recover_status;
       recover_mem = nullptr;
@@ -552,7 +564,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
       need_bgflush_l0 = true;
       recover_mem = mem;
       recover_edit = edit;
-      env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
+      env_->ScheduleNuma(&DBImpl::BGWork, this, GetNodeFromPath(dbname_));
       while(need_bgflush_l0);
       status = recover_status;
       recover_mem = nullptr;
@@ -570,6 +582,9 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   const uint64_t start_micros = env_->NowMicros();
   FileMetaData meta;
   meta.number = versions_->NewFileNumber();
+#if DEBUG_PRINT
+  printf("new wlt0 number #%ld\n", meta.number);
+#endif
   pending_outputs_.insert(meta.number);
   Iterator* iter = mem->NewIterator();
   Log(options_.info_log, "Level-0 table #%llu: started",
@@ -593,16 +608,28 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
       ParseInternalKey(key, &ikey);
       MemHashTableValue* v = mem_hashtable_->getTableValue(ikey.user_key);
       if(v == nullptr) {
-        // printf("write l0 table user key %s is empty\n", ikey.user_key.ToString().c_str());
+#if DEBUG_PRINT
+         printf("wlt0 #%ld key %s is empty\n", meta.number, ikey.user_key.ToString().c_str());
+#endif
         v = new MemHashTableValue();
+      } else {
+#if DEBUG_PRINT
+        printf("wlt0 #%ld key %s exist\n", meta.number, ikey.user_key.ToString().c_str());
+#endif
       }
+      if(v->sequence_number_ != -1 && v->sequence_number_ > ikey.sequence) continue;
       v->sstable_file_number_ = meta.number;
       v->sstable_file_size_ = meta.file_size;
-      // printf("wlt file number %ld, file size %ld, user key %s\n", v->sstable_file_number_, v->sstable_file_size_, ikey.user_key.ToString().c_str());
+      v->sequence_number_ = ikey.sequence;
+      v->on_change = false;
+#if DEBUG_PRINT
+       printf("wlt0 #%ld, size %ld, key %s\n", v->sstable_file_number_, v->sstable_file_size_, ikey.user_key.ToString().c_str());
+#endif
+#if DEBUG_PRINT
+       printf("wlt0 #%ld key %s on change false\n", v->sstable_file_number_, ikey.user_key.ToString().c_str());
+#endif
       mem_hashtable_->setValue(ikey.user_key, v);
     }
-    // printf("write level0 table number %ld finish\n", meta.number);
-
     mutex_.Lock();
   }
 
@@ -760,7 +787,7 @@ void DBImpl::MaybeScheduleCompaction() {
   } else {
     background_compaction_scheduled_ = true;
     // env_->Schedule(&DBImpl::BGWork, this);
-    env_->ScheduleNuma(&DBImpl::BGWork, this, 0);
+    env_->ScheduleNuma(&DBImpl::BGWork, this, GetNodeFromPath(dbname_));
   }
 }
 
@@ -899,6 +926,9 @@ Status DBImpl::OpenCompactionOutputFile(CompactionState* compact) {
   {
     mutex_.Lock();
     file_number = versions_->NewFileNumber();
+#if DEBUG_PRINT
+    printf("new compact file #%ld\n", file_number);
+#endif
     pending_outputs_.insert(file_number);
     CompactionState::Output out;
     out.number = file_number;
@@ -915,12 +945,20 @@ Status DBImpl::OpenCompactionOutputFile(CompactionState* compact) {
   // if (s.ok()) {
     compact->builder = new TableBuilder(options_, compact->outfile);
     compact->builder->setFileName(fname);
+    compact->builder->setFileNumber(file_number);
   // }
   return Status::OK();
 }
 
 Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
                                           Iterator* input) {
+#if DEBUG_PRINT
+  for(std::string ukey : compact->tmp_keys) {
+    printf("compact output #%ld, key %s\n", compact->current_output()->number,
+      ukey.c_str());
+  }
+#endif
+  
   assert(compact != nullptr);
   // assert(compact->outfile != nullptr);
   assert(compact->builder != nullptr);
@@ -952,6 +990,39 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
   delete compact->outfile;
   compact->outfile = nullptr;
 
+  // PMDB compaction add key value to hash table
+  assert(compact->tmp_keys.size() == compact->tmp_seq.size());
+  for(int i = 0; i < compact->tmp_keys.size(); i++) {
+    std::string ukey = compact->tmp_keys[i];
+    Slice uskey(ukey);
+    uint64_t seq = compact->tmp_seq[i];
+    MemHashTableValue* v = mem_hashtable_->getTableValue(uskey);
+    if(v == nullptr) {
+      v = new MemHashTableValue();
+#if DEBUG_PRINT
+      printf("compact #%ld key %s is empty\n", compact->current_output()->number, ukey.c_str());
+#endif
+  } else {
+#if DEBUG_PRINT
+      printf("compact #%ld key %s exist\n", compact->current_output()->number, ukey.c_str());
+#endif
+  }
+  
+  v->sstable_file_number_ = compact->current_output()->number;
+  v->sstable_file_size_ = compact->current_output()->file_size;
+  v->sequence_number_ = seq;
+  v->on_change = false;
+#if DEBUG_PRINT
+  printf("compact #%ld key %s on change false\n", compact->current_output()->number, ukey.c_str());
+#endif
+#if DEBUG_PRINT
+  printf("set compact #%ld, size %ld, key %s\n", v->sstable_file_number_, v->sstable_file_size_, ukey.c_str());
+#endif
+    mem_hashtable_->setValue(uskey, v);
+  }
+  compact->tmp_keys.clear();
+  compact->tmp_seq.clear();
+
   if (s.ok() && current_entries > 0) {
     // Verify that the table is usable
     Iterator* iter =
@@ -963,6 +1034,10 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
           (unsigned long long)output_number, compact->compaction->level(),
           (unsigned long long)current_entries,
           (unsigned long long)current_bytes);
+      
+#if DEBUG_PRINT
+      printf("finish compact #%ld\n", compact->current_output()->number);
+#endif
     }
   }
   return s;
@@ -1071,14 +1146,10 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
         drop = true;
       }
 
-      // PMDB delete key, if type is kTypeDeletion, remove from hash table
-      if(ikey.type == kTypeDeletion) {
-        mem_hashtable_->deleteKey(ikey.user_key);
-      }
 
       last_sequence_for_key = ikey.sequence;
     }
-#if 0
+#if DEBUG_PRINT
     Log(options_.info_log,
         "  Compact: %s, seq %d, type: %d %d, drop: %d, is_base: %d, "
         "%d smallest_snapshot: %d",
@@ -1087,7 +1158,9 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
         compact->compaction->IsBaseLevelForKey(ikey.user_key),
         (int)last_sequence_for_key, (int)compact->smallest_snapshot);
 #endif
-
+    if(ikey.type == kTypeDeletion) {
+      assert(mem_hashtable_->getTableValue(ikey.user_key) == nullptr);
+    }
     if (!drop) {
       // Open output file if necessary
       if (compact->builder == nullptr) {
@@ -1102,36 +1175,30 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
       compact->current_output()->largest.DecodeFrom(key);
 
       // PMDB add internal key
-      compact->tmp_keys.push_back(ikey);
-
+      // If ikey seq num < current seq , do not update
+      MemHashTableValue* v = mem_hashtable_->getTableValue(ikey.user_key);
+      if(v == nullptr || v->sequence_number_ <= ikey.sequence) {
+        compact->tmp_keys.push_back(ikey.user_key.ToString());
+        compact->tmp_seq.push_back(ikey.sequence);
+      }
+#if DEBUG_PRINT
+      printf("compact #%ld, key %s push tmp_keys\n", compact->current_output()->number, ikey.user_key.ToString().c_str());
+#endif
       compact->builder->Add(key, input->value());
     
       // Close output file if it is big enough
       if (compact->builder->FileSize() >=
           compact->compaction->MaxOutputFileSize()) {
         status = FinishCompactionOutputFile(compact, input);
-
-        // PMDB compaction add key value to hash table
-        for(ParsedInternalKey ikey : compact->tmp_keys) {
-          MemHashTableValue* v = mem_hashtable_->getTableValue(ikey.user_key);
-          if(v == nullptr) {
-            v = new MemHashTableValue();
-            // printf("userkey %s compaction value is empty\n", ikey.user_key.ToString().c_str());
-          } else {
-            // printf("userkey %s compaction value not empty\n", ikey.user_key.ToString().c_str());
-          }
-          v->sstable_file_number_ = compact->current_output()->number;
-          v->sstable_file_size_ = compact->current_output()->file_size;
-
-          // printf("docompactwork file number %ld, file size %ld, user key %s\n", v->sstable_file_number_, v->sstable_file_size_, ikey.user_key.ToString().c_str());
-          mem_hashtable_->setValue(ikey.user_key, v);
-        }
-        compact->tmp_keys.clear();
-
         if (!status.ok()) {
           break;
         }
       }
+    } else {
+#if DEBUG_PRINT
+      printf("compact #%ld, drop key %s\n", compact->current_output()->number, ikey.user_key.ToString().c_str());
+#endif
+      // mem_hashtable_->deleteKey(ikey.user_key);
     }
 
     input->Next();
@@ -1164,7 +1231,7 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
   stats_[compact->compaction->level() + 1].Add(stats);
 
   if (status.ok()) {
-    status = InstallCompactionResults(compact);
+    status = InstallCompactionResults(compact);  // here to delete input table file from files_
   }
   if (!status.ok()) {
     RecordBackgroundError(status);
@@ -1268,6 +1335,11 @@ void DBImpl::GetWrapper(std::promise<Status>* promise, const ReadOptions& option
   bool have_stat_update = false;
   Version::GetStats stats;
 
+  static int mem_cnt = 0;
+  static int imm_cnt = 0;
+  static int hash_cnt = 0;
+  static int sst_cnt = 0;
+
   // Unlock while reading from files and memtables
   {
     mutex_.Unlock();
@@ -1275,15 +1347,20 @@ void DBImpl::GetWrapper(std::promise<Status>* promise, const ReadOptions& option
     LookupKey lkey(key, snapshot);
     if (mem->Get(lkey, value, &s)) {
       // Done
+      mem_cnt++;
     } else if (imm != nullptr && imm->Get(lkey, value, &s)) {
       // Done
-    } else if (mem_hashtable_->countKey(lkey)) {
-      s = mem_hashtable_->getValue(options, lkey, value);
-      have_stat_update = true;
+      imm_cnt++;
+    } else if (mem_hashtable_->getValue(options, lkey, value)) {
+      hash_cnt++;
     } else {
+      sst_cnt++;
       s = current->Get(options, lkey, value, &stats);
       have_stat_update = true;
     }
+#if DEBUG_PRINT
+    printf("mem: %d, imm: %d, hash: %d, sst: %d\n", mem_cnt, imm_cnt, hash_cnt, sst_cnt);
+#endif
     mutex_.Lock();
     promise->set_value(s);
   }
@@ -1760,7 +1837,7 @@ Status DestroyDB(const std::string& dbname, const Options& options) {
 // MemHashTable Methods
 bool MemHashTable::countKey(LookupKey &lkey) {
   Slice ukey = lkey.user_key();
-  return mem_hash_table_.count(ukey.ToString());
+  return mem_hash_table_.count(ukey.ToString()) && !mem_hash_table_[ukey.ToString()]->on_change;
 }
 
 void MemHashTable::deleteKey(Slice &ukey) {
@@ -1769,11 +1846,18 @@ void MemHashTable::deleteKey(Slice &ukey) {
   }
 }
 
-Status MemHashTable::getValue(ReadOptions const &options, LookupKey const &lkey, std::string *value) {
+bool MemHashTable::getValue(ReadOptions const &options, LookupKey &lkey, std::string *value) {
   Slice ikey = lkey.internal_key();
   Slice ukey = lkey.user_key();
   Status s;
+
   MemHashTableValue* hashtable_value = mem_hash_table_[ukey.ToString()];
+  if(hashtable_value == nullptr) return false;
+  if(hashtable_value->on_change) return false;
+
+#if DEBUG_PRINT
+  printf("get value key: %s\n", ukey.ToString().c_str());
+#endif
   assert(hashtable_value->sstable_file_number_ != -1 && hashtable_value->sstable_file_size_ != -1 && !hashtable_value->block_handle_encoding_.empty());
 
   Cache::Handle* handle = nullptr;
@@ -1788,23 +1872,27 @@ Status MemHashTable::getValue(ReadOptions const &options, LookupKey const &lkey,
   saver.user_key = lkey.user_key();
   saver.value = value;
 
+  bool found = false;
+
   if(s.ok()) {
     Table* t = reinterpret_cast<TableAndFile*>(versions_->table_cache_->cache_->Value(handle))->table;
     if(hashtable_value->block_handle_encoding_.empty()) {
       s = t->InternalGet(options, ikey, &saver, SaveValue);
     } else {
-      // BlockHandle bh;
-      // if(!mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()) {
-      //   Slice* ts = new Slice(mem_hash_table_[ukey.ToString()]->block_handle_encoding_);
-      //   bh.DecodeFrom(ts);
-      // }
-      // printf("get value file number %ld, file size %ld, block offset %ld, block size %ld, user key %s\n",
-      //   mem_hash_table_[ukey.ToString()]->sstable_file_number_,
-      //   mem_hash_table_[ukey.ToString()]->sstable_file_size_,
-      //   mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()? -2:bh.offset(),
-      //   mem_hash_table_[ukey.ToString()]->block_handle_encoding_.empty()? -2:bh.size(), 
-      //   ukey.ToString().c_str());
+#if DEBUG_PRINT
+      BlockHandle bh;
+      if(!hashtable_value->block_handle_encoding_.empty()) {
+        Slice* ts = new Slice(hashtable_value->block_handle_encoding_);
+        bh.DecodeFrom(ts);
+      }
 
+      printf("get value file number %ld, file size %ld, block offset %ld, block size %ld, user key %s\n",
+        hashtable_value->sstable_file_number_,
+        hashtable_value->sstable_file_size_,
+        hashtable_value->block_handle_encoding_.empty()? -2:bh.offset(),
+        hashtable_value->block_handle_encoding_.empty()? -2:bh.size(), 
+        ukey.ToString().c_str());
+#endif
       Iterator* block_iter = t->BlockReader(t, options, Slice(hashtable_value->block_handle_encoding_));
       block_iter->Seek(ikey);
       if(block_iter->Valid()) {
@@ -1813,28 +1901,45 @@ Status MemHashTable::getValue(ReadOptions const &options, LookupKey const &lkey,
       s = block_iter->status();
       delete block_iter;
     }
+
+    if(!s.ok()) {
+#if DEBUG_PRINT
+      printf("get value block iter not ok, user key %s\n", ukey.ToString().c_str());
+#endif
+    } else {
+#if DEBUG_PRINT
+      printf("get value get correct value, user key %s\n", ukey.ToString().c_str());
+#endif
+      found = true;
+    }
     versions_->table_cache_->cache_->Release(handle);
+  } else {
+#if DEBUG_PRINT
+    printf("get value find table not ok, file number %ld, file size %ld, user key %s\n", hashtable_value->sstable_file_number_, hashtable_value->sstable_file_size_, ukey.ToString().c_str());
+#endif
   }
-  return s;
+  return found;
 }
 
 void MemHashTable::setValue(Slice &ukey, MemHashTableValue *value) {
   mem_hash_table_[ukey.ToString()] = value;
-  // BlockHandle bh;
-  // if(!value->block_handle_encoding_.empty()) {
-  //   Slice* ts = new Slice(value->block_handle_encoding_);
-  //   bh.DecodeFrom(ts);
-  // }
-  // std::string us = ukey.ToString();
-  // const char* cs = ukey.ToString().c_str();
-  // printf("set value file number %ld, file size %ld, block offset %ld, block size %ld, user key %s\n",
-  //   value->sstable_file_number_,
-  //   value->sstable_file_size_,
-  //   value->block_handle_encoding_.empty()? -2
-  //     :bh.offset(),
-  //   value->block_handle_encoding_.empty()? -2
-  //     :bh.size(), 
-  //   ukey.ToString().c_str());
+#if DEBUG_PRINT
+  BlockHandle bh;
+  if(!value->block_handle_encoding_.empty()) {
+    Slice* ts = new Slice(value->block_handle_encoding_);
+    bh.DecodeFrom(ts);
+  }
+  std::string us = ukey.ToString();
+  const char* cs = ukey.ToString().c_str();
+  printf("set value file number %ld, file size %ld, block offset %ld, block size %ld, user key %s\n",
+    value->sstable_file_number_,
+    value->sstable_file_size_,
+    value->block_handle_encoding_.empty()? -2
+      :bh.offset(),
+    value->block_handle_encoding_.empty()? -2
+      :bh.size(), 
+    ukey.ToString().c_str());
+#endif
 }
 
 MemHashTableValue* MemHashTable::getTableValue(Slice& ukey) {
