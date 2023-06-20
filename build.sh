@@ -1,7 +1,7 @@
 CURRENT_DIR=$(cd "$(dirname "$0")";pwd)
 
 cd $CURRENT_DIR/build
-cmake -DCMAKE_BUILD_TYPE=Debug $CURRENT_DIR/build/..
+cmake -DCMAKE_BUILD_TYPE=Release $CURRENT_DIR/build/..
 cmake --build $CURRENT_DIR/build
 cd $CURRENT_DIR/..
 export LD_LIBRARY_PATH=/usr/local/lib/:$LD_LIBRARY_PATH

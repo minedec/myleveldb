@@ -46,6 +46,8 @@
 #include "version_set.cc"
 #include "table/format.h"
 #include "leveldb/table.h"
+#include <unistd.h>
+#include <sys/syscall.h>
 
 
 namespace leveldb {
@@ -1305,16 +1307,6 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
 
 Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
-  std::promise<Status> promise;
-  std::future<Status> future = promise.get_future();
-  // auto getfunc = std::bind(&DBImpl::GetWrapper, this, &promise, options, key, value);
-  // threadPool->addTask(getfunc);
-  GetWrapper(&promise, options, key, value);
-  return future.get();
-}
-
-void DBImpl::GetWrapper(std::promise<Status>* promise, const ReadOptions& options, const Slice& key,
-                   std::string* value) {
   Status s;
   MutexLock l(&mutex_);
   SequenceNumber snapshot;
@@ -1325,6 +1317,9 @@ void DBImpl::GetWrapper(std::promise<Status>* promise, const ReadOptions& option
     snapshot = versions_->LastSequence();
   }
 
+#if DEBUG_PRINT
+  printf("Get running on thread %ld\n", syscall(SYS_gettid));
+#endif
   MemTable* mem = mem_;
   MemTable* imm = imm_;
   Version* current = versions_->current();
@@ -1362,7 +1357,6 @@ void DBImpl::GetWrapper(std::promise<Status>* promise, const ReadOptions& option
     printf("mem: %d, imm: %d, hash: %d, sst: %d\n", mem_cnt, imm_cnt, hash_cnt, sst_cnt);
 #endif
     mutex_.Lock();
-    promise->set_value(s);
   }
 
   if (have_stat_update && current->UpdateStats(stats)) {
@@ -1371,6 +1365,8 @@ void DBImpl::GetWrapper(std::promise<Status>* promise, const ReadOptions& option
   mem->Unref();
   if (imm != nullptr) imm->Unref();
   current->Unref();
+
+  return s;
 }
 
 Iterator* DBImpl::NewIterator(const ReadOptions& options) {
@@ -1404,23 +1400,18 @@ void DBImpl::ReleaseSnapshot(const Snapshot* snapshot) {
 
 // Convenience methods
 Status DBImpl::Put(const WriteOptions& o, const Slice& key, const Slice& val) {
-  return PutWrapper(o, key, val);
+  WriteBatch batch;
+  batch.Put(key, val);
+  return Write(o, &batch);
 }
 
 Status DBImpl::Delete(const WriteOptions& options, const Slice& key) {
-  return DeleteWrapper(options, key);
+  WriteBatch batch;
+  batch.Delete(key);
+  return Write(options, &batch);
 }
 
 Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
-  std::promise<Status> promise;
-  std::future<Status> future = promise.get_future();
-  // auto writefunc = std::bind(&DBImpl::WriteWrapper, this, &promise, options, updates);
-  // threadPool->addTask(writefunc);
-  WriteWrapper(&promise, options, updates);
-  return future.get();
-}
-
-void DBImpl::WriteWrapper(std::promise<Status>* promise, const WriteOptions& options, WriteBatch* updates) {
   Writer w(&mutex_);
   w.batch = updates;
   w.sync = options.sync;
@@ -1432,8 +1423,7 @@ void DBImpl::WriteWrapper(std::promise<Status>* promise, const WriteOptions& opt
     w.cv.Wait();
   }
   if (w.done) {
-    promise->set_value(w.status);
-    return;
+    return w.status;
   }
 
   // May temporarily unlock and wait.
@@ -1492,7 +1482,7 @@ void DBImpl::WriteWrapper(std::promise<Status>* promise, const WriteOptions& opt
     writers_.front()->cv.Signal();
   }
 
-  promise->set_value(status);
+  return status;
 }
 
 
@@ -1719,20 +1709,8 @@ Status DB::Put(const WriteOptions& opt, const Slice& key, const Slice& value) {
   return Write(opt, &batch);
 }
 
-// DB::Put wrapper
-Status DBImpl::PutWrapper(const WriteOptions& opt, const Slice& key, const Slice& value) {
-  WriteBatch batch;
-  batch.Put(key, value);
-  return Write(opt, &batch);
-}
 
 Status DB::Delete(const WriteOptions& opt, const Slice& key) {
-  WriteBatch batch;
-  batch.Delete(key);
-  return Write(opt, &batch);
-}
-
-Status DBImpl::DeleteWrapper(const WriteOptions& opt, const Slice& key) {
   WriteBatch batch;
   batch.Delete(key);
   return Write(opt, &batch);
